@@ -9,6 +9,7 @@
     "snapshot": "tsx scripts/snapshot.ts",
     "gemini-draw": "tsx scripts/gemini-draw.ts",
     "serve": "tsx scripts/serve.ts",
+    "test": "tsx --test src/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {
