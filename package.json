@@ -1,0 +1,22 @@
+{
+  "name": "brix",
+  "version": "0.0.1",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "lens": "tsx scripts/google-lens.ts",
+    "login": "tsx scripts/login.ts",
+    "snapshot": "tsx scripts/snapshot.ts",
+    "gemini-draw": "tsx scripts/gemini-draw.ts",
+    "serve": "tsx scripts/serve.ts",
+    "typecheck": "tsc --noEmit"
+  },
+  "dependencies": {
+    "rebrowser-playwright": "^1.49.0"
+  },
+  "devDependencies": {
+    "@types/node": "^22.0.0",
+    "tsx": "^4.19.0",
+    "typescript": "^5.6.0"
+  }
+}

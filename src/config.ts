@@ -1,0 +1,105 @@
+// brix 运行时配置：纯环境变量 + 默认值
+// 全部 key 以 BRIX_ 开头，不与系统其他环境变量冲突
+
+import { join, resolve } from 'node:path';
+import { existsSync } from 'node:fs';
+
+export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
+
+export interface EnvConfig {
+  /** 用户数据目录（profile） */
+  USER_DATA_DIR: string;
+  /** Chrome remote debugging 端口 */
+  CDP_PORT: number;
+  /** CDP HTTP 端点（http://...） */
+  CDP_ENDPOINT: string;
+  /** Chrome 可执行文件路径，找不到则启动时报错 */
+  CHROME_PATH: string | null;
+  /** 数据 / 日志 / run 产物根目录 */
+  DATA_DIR: string;
+  /** Chrome 默认下载目录（通过修补 Default/Preferences 的 download.default_directory 实现） */
+  DOWNLOAD_DIR: string;
+  /** Chrome 磁盘缓存目录（--disk-cache-dir） */
+  CACHE_DIR: string;
+  /** Chrome crash dumps 目录（--crash-dumps-dir） */
+  CRASH_DIR: string;
+  /** 控制台日志级别 */
+  LOG_LEVEL: LogLevel;
+  /** 空闲多少分钟后自动断开 Playwright 连接（不关 Chrome 进程），0 = 不超时 */
+  IDLE_TIMEOUT_MIN: number;
+  /** snapshot 文本最大字符数 */
+  SNAPSHOT_MAX_CHARS: number;
+  /** HTTP 服务鉴权 token；server 启动前必须非空，否则拒启 */
+  HTTP_TOKEN: string | null;
+  /** HTTP 监听 host，默认 0.0.0.0（LAN 可达） */
+  HTTP_HOST: string;
+  /** HTTP 监听端口，默认 9233 */
+  HTTP_PORT: number;
+}
+
+const CHROME_CANDIDATES = [
+  process.env.BRIX_CHROME_PATH,
+  'C:\\Program Files\\Google\\Chrome\\Application\\chrome.exe',
+  'C:\\Program Files (x86)\\Google\\Chrome\\Application\\chrome.exe',
+  `${process.env.LOCALAPPDATA ?? ''}\\Google\\Chrome\\Application\\chrome.exe`,
+].filter(Boolean) as string[];
+
+function findChromeExecutable(): string | null {
+  for (const p of CHROME_CANDIDATES) {
+    if (p && existsSync(p)) return p;
+  }
+  return null;
+}
+
+function intEnv(name: string, def: number): number {
+  const raw = process.env[name];
+  if (!raw) return def;
+  const n = Number(raw);
+  return Number.isFinite(n) ? n : def;
+}
+
+function levelEnv(name: string, def: LogLevel): LogLevel {
+  const raw = process.env[name]?.toLowerCase();
+  if (raw === 'debug' || raw === 'info' || raw === 'warn' || raw === 'error') return raw;
+  return def;
+}
+
+let cached: EnvConfig | null = null;
+
+export function getEnv(): EnvConfig {
+  if (cached) return cached;
+
+  const userDataDir = process.env.BRIX_USER_DATA_DIR
+    ? resolve(process.env.BRIX_USER_DATA_DIR)
+    : resolve('user-data-dir/default');
+  const dataDir = process.env.BRIX_DATA_DIR ? resolve(process.env.BRIX_DATA_DIR) : resolve('data');
+  const downloadDir = process.env.BRIX_DOWNLOAD_DIR
+    ? resolve(process.env.BRIX_DOWNLOAD_DIR)
+    : join(dataDir, 'downloads');
+  const cacheDir = process.env.BRIX_CACHE_DIR
+    ? resolve(process.env.BRIX_CACHE_DIR)
+    : join(dataDir, 'chrome-cache');
+  const crashDir = process.env.BRIX_CRASH_DIR
+    ? resolve(process.env.BRIX_CRASH_DIR)
+    : join(dataDir, 'chrome-crashes');
+  const cdpPort = intEnv('BRIX_CDP_PORT', 9222);
+  const cdpEndpoint = process.env.BRIX_CDP_URL || `http://127.0.0.1:${cdpPort}`;
+
+  cached = {
+    USER_DATA_DIR: userDataDir,
+    CDP_PORT: cdpPort,
+    CDP_ENDPOINT: cdpEndpoint,
+    CHROME_PATH: findChromeExecutable(),
+    DATA_DIR: dataDir,
+    DOWNLOAD_DIR: downloadDir,
+    CACHE_DIR: cacheDir,
+    CRASH_DIR: crashDir,
+    LOG_LEVEL: levelEnv('BRIX_LOG_LEVEL', 'info'),
+    IDLE_TIMEOUT_MIN: intEnv('BRIX_IDLE_TIMEOUT_MIN', 30),
+    SNAPSHOT_MAX_CHARS: intEnv('BRIX_SNAPSHOT_MAX_CHARS', 16000),
+    HTTP_TOKEN: process.env.BRIX_TOKEN?.trim() || null,
+    HTTP_HOST: process.env.BRIX_HTTP_HOST?.trim() || '0.0.0.0',
+    HTTP_PORT: intEnv('BRIX_HTTP_PORT', 9233),
+  };
+  return cached;
+}
