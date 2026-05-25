@@ -36,10 +36,19 @@ BRIX_TOKEN=<your-secret> npm run serve
 每个脚本都既可走 HTTP，也可单独 CLI 调试：
 
 ```bash
-npm run login                          # 打开 accounts.google.com 等用户登录
+npm run login                          # 通过 brix HTTP API 触发登录脚本（自动化）
 npm run lens -- ./image.png            # Google Lens 识图
 npm run gemini-draw -- "画一只猫"      # Gemini 生图
 npm run snapshot -- https://example.com [--interactive-only] [--max-depth=N]
+```
+
+如果 Google 把自动化的 Chrome 判为"不安全浏览器"，先关掉 serve，用 `open-profile` 在同一个
+USER_DATA_DIR 上启一个 **不带 CDP / 不带 automation flag** 的纯净 Chrome，手动登录后关窗口，
+cookie 会留在 profile 里，下次 `npm run serve` 经 CDP attach 即继承登录态：
+
+```bash
+npm run open-profile -- https://accounts.google.com
+# 在弹出的 Chrome 里登录 → 关闭窗口 → 启 serve
 ```
 
 CLI 末行会打印一行 JSON：`{runId, output, downloads, error}`。downloads 里的文件落在 `<DATA_DIR>/runs/<runId>/downloads/`。
