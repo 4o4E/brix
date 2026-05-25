@@ -1,6 +1,12 @@
 // brix 运行时配置：纯环境变量 + 默认值
 // 全部 key 以 BRIX_ 开头，不与系统其他环境变量冲突
+//
+// dotenv/config 在这里副作用 import 一次：所有 script / server 入口都先经
+// config.ts 才读环境变量，从这一处统一加载 .env，其它入口零样板。
+// dotenv 默认不覆盖已存在的 process.env，所以测试里手动 set 的 BRIX_*
+// 不会被 .env 反向覆盖。
 
+import 'dotenv/config';
 import { join, resolve } from 'node:path';
 import { existsSync } from 'node:fs';
 
