@@ -188,10 +188,13 @@ interface Run {
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # node:test via tsx，44 个单元测试
+npm test            # node:test via tsx，153 个单元 + 集成测试，不需要 Chrome
+npm run e2e         # 真 Chrome 端到端，需要本机装 Chrome；CI 在 ubuntu + xvfb 下跑
 ```
 
-测试覆盖 `src/runs/*` 和 `src/server/{auth,util}.ts`；`browser/`、`sessions/registry`、各 `scripts/*` 需要真实 Chrome，留给端到端测试。
+`npm test` 覆盖 `src/runs/*` 的纯逻辑单元 + `src/server/*` 的全部 HTTP 路由集成（auth 矩阵 / scripts CRUD / files CRUD / 错误形状），不起 Chrome 因此快且稳。
+
+`npm run e2e` 走完整链路：spawn 真 `tsx scripts/serve.ts` 子进程 → 拉真 Chrome → 在本机 fixture 页上跑 snapshot 和触发下载的脚本 → 验证 `/sessions` `/runs/:id/files` 全链路。GitHub Actions（`.github/workflows/e2e.yml`）在每次 push/PR 到 main/master 时跑一遍。
 
 ## 项目结构
 
