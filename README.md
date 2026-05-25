@@ -1,293 +1,216 @@
 # brix
 
-`brix` 是一个浏览器脚本执行平台，管理一个反检测浏览器进程及其上的脚本和会话。平台启动时拉起浏览器，每个 session 对应浏览器里的一个 tab，调用方在同一 tab 上可执行多条脚本，得到结构化结果和诊断信息。
+浏览器脚本执行平台：拉起一个真实 Chrome（叠加 [rebrowser-patches][rb]），通过 CDP 接管，对外暴露 HTTP API 让远端调用方在 tab 里跑预置脚本，取回结构化结果和落地的下载文件。
 
-定位是后端基础设施：bot、后端服务、定时任务都通过 HTTP API 调用，不直接操作浏览器进程。部署目标是 Windows。
+部署目标 Windows。设计背景参见 [docs/design.md](docs/design.md)。
 
-## 目标
+[rb]: https://github.com/rebrowser/rebrowser-patches
 
-- 浏览器进程管理：平台维护一个长期运行的反检测浏览器进程，加载指定 profile（user-data-dir），常驻不退出。
-- 会话管理：session 对应浏览器中的一个 tab，长期保持；支持在同一 tab 上多次连续操作。所有 session 共享同一份 cookie / 登录态 / storage。
-- 脚本管理：保存脚本、版本、适用站点、输入参数、输出 schema、最近成功状态。
-- 任务执行：调用方提交 `(sessionId, scriptId, input)`，平台执行脚本步骤并返回结构化结果。
-- 协议灵活度：浏览器进程暴露 CDP，调用方既可走 Playwright 高层 API，也可下到 raw CDP 干 OS 级操作（原生粘贴、剪贴板、拖拽、文件 chooser 等 JS 难做或做不准的事），并允许外部工具直连接管。
-- 诊断回放：保存页面截图、HTML 摘要、控制台错误、网络失败、脚本版本和执行耗时。
-- 未来可拆：bot、后端或其他服务都通过 API 调用，不绑定具体业务进程。
+## 前置依赖
 
-## 非目标
+- Windows 10/11
+- Node.js 22+
+- 本地装 Chrome（默认路径 `C:\Program Files\Google\Chrome\Application\chrome.exe`，或通过 `BRIX_CHROME_PATH` 覆盖）
 
-- 不做验证码绕过或对抗式反爬。
-- 不把所有站点都强行抽象成爬虫；能用 API 的脚本仍然走 API。
-- 不让平台自动生成或修复脚本；脚本完全由人手编写和版本化提交。
-- 不让业务方直接操作浏览器实例，所有访问通过 API。
-- 不在一个进程内做多账户隔离；多账户场景靠跑多份 brix 实例解决。
-- 不追求跨平台一致性；以 Windows 为第一部署目标。
+## 安装
 
-## 核心概念
-
-### 浏览器进程
-
-平台启动时拉起 **一个** 反检测浏览器进程，加载 `<BRIX_USER_DATA_DIR>/<BRIX_PROFILE>/` 下的 profile，常驻运行。所有 session 都在这个进程里以 tab 形式存在，共享同一份 cookie / 登录态 / storage。
-
-### 会话 (Session)
-
-一个 Session 对应浏览器中的一个 tab（page）。
-
-- 生命周期由调用方控制：创建后保持活动，直到调用方关闭或 TTL 到期。
-- **单 session 内串行**：同一 session 同一时刻只能跑一个 run，避免在同一 tab 上互相干扰。
-- **不同 session 之间并发**：不同 tab 可以并行执行 run（受浏览器整体负载和站点冷却限制）。
-
-### 脚本 (Script)
-
-一段保存在平台中的、由人手编写的浏览器操作序列 + 结果提取逻辑。脚本本身不绑定 session，可以在任意符合 `match` 条件的 session 上运行。
-
-### 执行 (Run)
-
-一次脚本在某个 session（tab）上的执行。Run 本身无状态，所有可复用状态都留在 session 的 tab 里以及共享的 profile 里。
-
-## 核心流程
-
-```text
-brix 启动
-  -> 拉起浏览器进程（常驻）
-     加载 profile = <BRIX_USER_DATA_DIR>/<BRIX_PROFILE>/
-
-bot / backend
-
-  -> POST /sessions                       # 申请一个 tab
-     <- { sessionId }
-
-  -> POST /sessions/{id}/runs             # 在 tab 上执行脚本（可多次）
-     { scriptId: "google-lens", input: { url: "..." } }
-     <- { runId, status, result, diagnostics }
-
-  -> POST /sessions/{id}/runs             # 复用 tab 上的状态再来一次
-     { scriptId: "google-lens-next-page" }
-
-  -> DELETE /sessions/{id}                # 关闭 tab
+```bash
+npm install
 ```
 
-## 浏览器栈
+不会自动下载 Chromium —— brix 用本机的真实 Chrome。
 
-### 候选对比
+## 启动 HTTP 服务
 
-| 维度 | rebrowser-patches (Chromium) | Camoufox (Firefox) | 真实 Chrome + rebrowser-playwright |
+```bash
+BRIX_TOKEN=<your-secret> npm run serve
+# brix http on http://0.0.0.0:9233
+```
+
+- `BRIX_TOKEN` 必须设置，否则启动失败。
+- `/health` 公开；其余端点需要 `Authorization: Bearer <token>` 或 `X-Brix-Token: <token>`。
+- 首次请求会拉起 Chrome 进程（CDP `--remote-debugging-port=9222`），常驻复用。
+
+## CLI
+
+每个脚本都既可走 HTTP，也可单独 CLI 调试：
+
+```bash
+npm run login                          # 打开 accounts.google.com 等用户登录
+npm run lens -- ./image.png            # Google Lens 识图
+npm run gemini-draw -- "画一只猫"      # Gemini 生图
+npm run snapshot -- https://example.com [--interactive-only] [--max-depth=N]
+```
+
+CLI 末行会打印一行 JSON：`{runId, output, downloads, error}`。downloads 里的文件落在 `<DATA_DIR>/runs/<runId>/downloads/`。
+
+也可强制传 JSON 参数：
+
+```bash
+npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
+```
+
+## 环境变量
+
+| 名 | 默认 | 说明 |
+|---|---|---|
+| `BRIX_TOKEN` | — | HTTP 鉴权 token。空则服务拒启 |
+| `BRIX_HTTP_HOST` | `0.0.0.0` | HTTP 监听地址 |
+| `BRIX_HTTP_PORT` | `9233` | HTTP 监听端口 |
+| `BRIX_USER_DATA_DIR` | `./user-data-dir/default` | Chrome profile 根目录（含 cookie） |
+| `BRIX_DATA_DIR` | `./data` | run 产物根目录（含 downloads） |
+| `BRIX_CHROME_PATH` | 自动探测 | Chrome 可执行文件路径 |
+| `BRIX_CDP_PORT` | `9222` | Chrome remote debugging port |
+| `BRIX_CDP_URL` | `http://127.0.0.1:<port>` | 已运行的 CDP 端点（附加模式） |
+| `BRIX_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
+| `BRIX_IDLE_TIMEOUT_MIN` | `30` | 空闲多少分钟后断开 Playwright（不关 Chrome），0 = 不超时 |
+| `BRIX_DOWNLOAD_DIR` / `BRIX_CACHE_DIR` / `BRIX_CRASH_DIR` | `<DATA_DIR>/...` | 各类 Chrome 内部目录 |
+| `BRIX_SNAPSHOT_MAX_CHARS` | `16000` | snapshot 文本最大字符数 |
+
+## HTTP API
+
+错误统一：`400 bad_request` / `403 forbidden` / `404 not_found` / `500 internal`，body 形如 `{"error":"...","details":"..."}`。
+
+### 公开端点
+
+| Method | Path | 响应 |
+|---|---|---|
+| GET | `/health` | `200 {ok:true}` |
+
+### 会话（执行入口）
+
+所有脚本执行都在某个 session 的 tab 里发生。
+
+| Method | Path | Body | 响应 |
 |---|---|---|---|
-| 内核 | Patched Chromium | Patched Firefox | 本地真实 Chrome |
-| 调试协议 | CDP | Juggler（Firefox 等价 CDP） | CDP |
-| 反检测重点 | CDP 层痕迹（`Runtime.Enable`、`sourceURL=pptr:`、utility world 名） | C++ 层 spoof navigator / WebGL / Canvas / 字体 / WebRTC | CDP 层痕迹 + 真实浏览器指纹基线 |
-| CreepJS 检出率 | 高（接近 vanilla playwright） | 接近 0% | 中（指纹基线真实，CDP 痕迹已修） |
-| Windows 部署 | 需 `patch.exe`（Git for Windows）；纯 Node 运行时 | v150 之前 Windows build 不全；headless 仍有崩溃 issue (#614) | 最简单，沿用本地 Chrome 安装 |
-| API | drop-in puppeteer / playwright | Playwright Firefox 子集 | 标准 Playwright + CDP |
-| Node 绑定 | 一等公民 | 第三方 `camoufox-js`（Apify 维护，标 Experimental） | 一等公民 |
-| 安装体积 | 小 | 自带 ~200MB 定制 Firefox 二进制 | 小（复用本地 Chrome） |
-| 维护活跃度 | 放缓（最近 release 2025-05） | 高（2026-05 仍大版本迭代） | 跟随 playwright 节奏 |
-| 外部调试生态 | DevTools 可远程 inspect | 只能用 Playwright Firefox inspector / `about:debugging` | DevTools 可远程 inspect，生态最广 |
+| POST | `/sessions` | `{url?:string}` | `201 {sessionId, url}` —— 开新 tab，可选直接 goto |
+| GET | `/sessions` | — | `200 [{sessionId, url, createdAt, lastActiveAt}, ...]` |
+| POST | `/sessions/:sid/scripts/:name` | `{args?:any}` | `200 {runId, output, downloads}` —— 同步等完成 |
+| DELETE | `/sessions/:sid` | — | `204` |
 
-数据来源：2026 公开 benchmark（CreepJS、Cloudflare 实测）。Camoufox 在指纹层全面领先；rebrowser 系列只修 CDP 层泄露，对 Canvas/WebGL/字体不处理。
+脚本 throw 时返回 `500 {error:"script_failed", details, runId, downloads}` —— 调用方可拿 `runId` 去 files 端点取已经落地的部分产物。
 
-### 推荐
+### 脚本 CRUD（不含执行）
 
-**主选：真实 Chrome + `rebrowser-playwright`（叠加 `rebrowser-patches`）。**
+`scripts/` 目录下的 `.ts` 文件。内置脚本（gemini-draw / google-lens / snapshot / login）走同一套，调用方有 token 就有权改/删；想恢复就 PUT 回去。
 
-理由：
+| Method | Path | Body | 响应 |
+|---|---|---|---|
+| GET | `/scripts` | — | `200 [{name, description?, argsExample?, bytes, createdAt, updatedAt}, ...]` |
+| GET | `/scripts/:name` | — | `200 {meta, source}` |
+| PUT | `/scripts/:name` | `{source:string}` | `200 {meta}` —— 写前用 `tsc --noEmit` 做语法检查，失败 `400 bad_script` |
+| DELETE | `/scripts/:name` | — | `204` |
 
-- **协议灵活度 + 原生能力最完整**。CDP 有公开文档，可在 Playwright 之外用 `chrome-remote-interface` 等任意客户端，也可在 Playwright 内 `page.context().newCDPSession(page)` 下到 raw CDP；浏览器原生粘贴、剪贴板读写、原生拖拽、文件 chooser 等 JS 难做的操作 CDP 都有一等支持（`Browser.grantPermissions` + `Input.dispatchKeyEvent` + `Input.dispatchMouseEvent` 等）。Juggler 协议无公开文档、客户端只有 Playwright 一家，这类能力要么缺失要么不可靠。
-- **暴露调试端点最简单**：Chrome 的 `--remote-debugging-port` 直接给出 `ws://127.0.0.1:<port>/devtools/browser/<id>`，DevTools / chrome-remote-interface / Puppeteer 等任意工具都能直连。
-- 真实 Chrome 自带"主流浏览器指纹"基线，配合 rebrowser-patches 清掉 CDP 层泄露痕迹（`Runtime.Enable`、`sourceURL=pptr:` 等）。
-- 安装链路最短：本地装 Chrome + `npm i rebrowser-playwright`，不需要额外下 200MB 二进制。
-- API 与标准 Playwright 完全兼容，便于后续切换或并存其它驱动。
+`name` 规则：`^[a-z0-9][a-z0-9-]{0,63}$`。源码上限 1 MB。
 
-**主要权衡**：
+### 下载文件
 
-- 指纹层（CreepJS / Canvas / WebGL）防护明显弱于 Camoufox。遇到 Cloudflare / DataDome 高级模式被识别的站点，需额外接入 fingerprint 注入（BrowserForge 等）或换路线。
-- rebrowser-patches 维护节奏放缓（最近 release 2025-05），要锁版本并跟 Playwright 升级做回归测试。
+每个 run 产生的下载文件落在 `<DATA_DIR>/runs/<runId>/downloads/`，由这套端点暴露。run 的其他产物（截图、HTML、`result.json`、stage-*）在 `runs/<runId>/` 但 **不通过 HTTP 暴露**。
 
-**备选：Camoufox（通过 `camoufox-js`）。**
+| Method | Path | 响应 |
+|---|---|---|
+| GET | `/runs/:id/files` | `200 [{name, bytes, mimeType, downloadedAt}, ...]` |
+| GET | `/runs/:id/files/:name` | `200 <bytes>` + `Content-Type` / `Content-Length` / `Content-Disposition: attachment` |
+| DELETE | `/runs/:id/files/:name` | `204` —— 硬删除 |
 
-适用场景：指纹防护要求极致、且业务场景不依赖 CDP 原生能力（粘贴 / 剪贴板 / 复杂输入分发等）的目标站点。代价是只能 Playwright client 连得上（第三方工具 / DevTools 远程 inspect 全部失效），Juggler 协议在浏览器原生操作上能力不全，调试可达性主要依靠 Playwright Firefox 自带 inspector。
+文件名校验：`^[A-Za-z0-9._-]{1,255}$`，且不以 `.` 开头、不含 `..`。`/`、`\`、`..` 等路径穿越尝试直接 404。
 
-**架构建议**：抽象 `BrowserDriver` 接口，主线跑 Chrome。若后续少数站点指纹防护要求极致，再挂 Camoufox 实现作为旁路通道。
+### 例子
 
-### 运行参数
+```bash
+TOKEN=test123 BASE=http://127.0.0.1:9233
 
-- 在 Windows 上以服务 / 后台进程方式运行；浏览器进程加载固定的 user-data-dir，进程内复用。
-- 默认有头模式（headless 更容易被指纹识别）；是否支持 headless 后续视测试结果决定。
-- 提供两种启动模式：
-  - **平台拉起**（默认）：brix 自行启动反检测浏览器并管理生命周期。
-  - **附加现有**：调用方自行启动浏览器并暴露调试端口，把地址给 brix 接管。
-- 浏览器进程的 CDP 端点（`ws://127.0.0.1:<port>/devtools/browser/<id>`）在平台启动日志中打印，也可通过 `GET /debug-info` 查询。
+# 1. 开 session（直接打开 gemini）
+SID=$(curl -sX POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"url":"https://gemini.google.com/app"}' $BASE/sessions | jq -r .sessionId)
 
-## 脚本模型草案
+# 2. 跑 gemini-draw
+RES=$(curl -sX POST -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
+  -d '{"args":{"prompt":"画一只猫"}}' $BASE/sessions/$SID/scripts/gemini-draw)
+RID=$(echo $RES | jq -r .runId)
+
+# 3. 列 / 取 / 删 下载文件
+curl -H "Authorization: Bearer $TOKEN" $BASE/runs/$RID/files
+curl -H "Authorization: Bearer $TOKEN" $BASE/runs/$RID/files/image-0.png -o cat.png
+curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/runs/$RID/files/image-0.png -i
+
+# 4. 关 session
+curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/sessions/$SID -i
+```
+
+## 内置脚本
+
+| 脚本 | args | 输出要点 |
+|---|---|---|
+| [gemini-draw](scripts/gemini-draw.ts) | `{prompt: string}` | 图片落 `downloads/image-N.<ext>`；文字回复在 `output.text` |
+| [google-lens](scripts/google-lens.ts) | `{image: string}`（base64/dataURL）或 `{imagePath: string}` | `output.pages: [{title, url, sourceDomain, thumbnailUrl, ...}]` |
+| [snapshot](scripts/snapshot.ts) | `{url?, scope?, interactiveOnly?, maxDepth?}` | `output.snapshot: string`（带 `[ref=eN]`）+ refMap 落 `refs.json` |
+| [login](scripts/login.ts) | — | 打开 accounts.google.com 等用户登录，最多 10 分钟。cookie 留在 profile |
+
+## 写自定义脚本
+
+约定：
 
 ```ts
-export interface BrowserScript {
-  id: string;
-  version: number;
-  name: string;
-  type: 'browser' | 'api';
-  enabled: boolean;
-  inputSchema: Record<string, unknown>;
-  outputSchema: Record<string, unknown>;
-  match?: {
-    domains?: string[];
-    urlPatterns?: string[];
-  };
-  steps: ScriptStep[];
-  extractor?: { code: string };           // 在结果页执行的纯读取脚本
-  limits?: {
-    timeoutMs?: number;
-    cooldownMs?: number;
-  };
-}
+// scripts/my-thing.ts
+import type { Page } from 'rebrowser-playwright';
+import type { Run } from '../src/runs/run.js';
 
-export type ScriptStep =
-  | { type: 'navigate'; urlTemplate: string; waitUntil?: 'load' | 'domcontentloaded' | 'networkidle' }
-  | { type: 'upload';   selector: string; inputKey: string }
-  | { type: 'click';    selector: string }
-  | { type: 'waitFor';  selector: string; timeoutMs?: number }
-  | { type: 'execute';  code: string };   // 在页面上下文里跑一段自定义 JS
-```
+export const meta = {
+  description: '...',
+  argsExample: { foo: 'bar' },
+};
 
-API 类脚本 (`type: 'api'`) 不依赖浏览器，走另一组 step 类型（request / transform 等），后续细化。
-
-## API 草案
-
-### 创建会话
-
-```http
-POST /sessions
-Content-Type: application/json
-
-{
-  "ttlSeconds": 3600
+export async function runInSession(page: Page, args: unknown, run: Run): Promise<unknown> {
+  // 操作 page；产物用 run.writeArtifact / run.saveDownload 落地
+  await page.goto('https://example.com');
+  await run.writeArtifact('result.json', JSON.stringify({ title: await page.title() }));
+  return { title: await page.title() };
 }
 ```
 
-返回：
+`Run` 接口：
 
-```json
-{
-  "sessionId": "sess_01",
-  "targetId":  "page_target_id",
-  "expiresAt": "2026-05-22T12:00:00Z"
+```ts
+interface Run {
+  runId: string;
+  dir: string;            // <DATA_DIR>/runs/<runId>/ 脚本私有，不走 HTTP
+  downloadsDir: string;   // <DATA_DIR>/runs/<runId>/downloads/ 走 HTTP /runs/:id/files
+  saveDownload(d: Download, name?: string): Promise<DownloadedFile>;
+  writeArtifact(name: string, data: Buffer | string): Promise<string>;
+  listDownloads(): Promise<DownloadedFile[]>;
 }
 ```
 
-所有 session 共享平台启动时已绑定的 profile，请求中无需指定。`targetId` 是 CDP 层稳定的 target 标识，外部 client 拿着它可以用 `Target.attachToTarget` 直接寻址该 tab，无需扫描。
+通过 `PUT /scripts/my-thing` 写进去，之后 `POST /sessions/:sid/scripts/my-thing` 调用即可。
 
-### 在会话上执行脚本
+## 开发
 
-支持同步 / 异步两种模式，由调用方在 `mode` 字段决定。同一 session 串行执行 run，不同 session 之间可并发。两种模式排队规则一致，区别只在调用方如何拿结果。
-
-**同步模式 (`mode: "sync"`，默认)**：HTTP 连接保持到执行结束，直接返回完整结果。
-
-```http
-POST /sessions/sess_01/runs
-Content-Type: application/json
-
-{
-  "scriptId":  "google-lens",
-  "input":     { "url": "https://example.com/image.jpg" },
-  "mode":      "sync",
-  "timeoutMs": 60000,
-  "options":   { "saveDiagnostics": true }
-}
+```bash
+npm run typecheck   # tsc --noEmit
+npm test            # node:test via tsx，44 个单元测试
 ```
 
-`timeoutMs` 解析优先级：请求参数 → 脚本 `limits.timeoutMs` → 平台默认 `60000`。
+测试覆盖 `src/runs/*` 和 `src/server/{auth,util}.ts`；`browser/`、`sessions/registry`、各 `scripts/*` 需要真实 Chrome，留给端到端测试。
 
-返回：
+## 项目结构
 
-```json
-{
-  "runId":         "run_01",
-  "scriptId":      "google-lens",
-  "scriptVersion": 3,
-  "status":        "ok",
-  "result":        { "candidates": [] },
-  "diagnostics":   {
-    "durationMs":     8421,
-    "screenshotPath": "runs/run_01/page.png"
-  }
-}
 ```
-
-**异步模式 (`mode: "async"`)**：立即返回 `runId`，调用方通过 `GET /runs/{runId}` 轮询状态和结果。
-
-```http
-POST /sessions/sess_01/runs
-Content-Type: application/json
-
-{
-  "scriptId": "google-lens",
-  "input":    { "url": "..." },
-  "mode":     "async"
-}
+brix/
+├── scripts/                  CLI 入口 + 内置脚本
+│   ├── serve.ts              HTTP 服务入口
+│   ├── gemini-draw.ts        内置脚本
+│   ├── google-lens.ts
+│   ├── snapshot.ts
+│   └── login.ts
+├── src/
+│   ├── config.ts             环境变量
+│   ├── browser/              真实 Chrome 拉起 + CDP 接管
+│   ├── runs/                 Run 抽象（id/mime/cli/run）
+│   ├── scripts/              脚本 CRUD（registry）
+│   ├── sessions/             会话注册表（内存 Map）
+│   ├── server/               HTTP 服务（http + auth + util + routes/）
+│   └── utils/                logger
+└── docs/
+    └── design.md             原始设计文档
 ```
-
-返回：
-
-```json
-{
-  "runId":  "run_01",
-  "status": "pending"
-}
-```
-
-### 关闭会话
-
-```http
-DELETE /sessions/sess_01
-```
-
-### 其他端点
-
-- `GET /sessions` — 列出活动会话。
-- `GET /sessions/{id}` — 当前 URL、剩余 TTL。
-- `GET /runs/{id}` — 查询 run 状态和结果（异步模式轮询用，也可查历史）。
-- `GET /debug-info` — 返回浏览器 CDP 端点地址，便于人工接管或外部工具直连。
-
-## 图片搜源脚本规划
-
-- `google-lens`：浏览器脚本，默认主链路。输入图片 URL 或文件，输出候选页面、候选图、标题和来源站点。
-- `saucenao`：API 脚本，使用官方 API key，输出相似度、数据库、外链和缩略图。
-- `trace-moe`：API 脚本，动画帧专用，输出番剧、集数、时间点和相似度。
-- `iqdb`：HTTP/API 风格脚本，低成本补充候选。
-- `ascii2d`：浏览器脚本，作为插画类低频兜底。
-- `yandex-image`：浏览器脚本，Google 不可用时兜底。
-
-搜源结果之后可以接独立的 verifier（pHash / dHash / 颜色直方图 / 多模态比对），但 verifier 不在 brix 范围内，由调用方或专门服务负责。
-
-## 浏览器与诊断
-
-- 浏览器进程常驻，所有 session 复用；run 结束后不主动清理 tab 状态，页面与 cookie 留给同 session 后续 run 或其它 session 共享。
-- 按脚本和站点设置 `timeoutMs`、`cooldownMs`。
-- 每个 run 默认保存：截图、最终 URL、标题、控制台错误、关键网络失败、步骤级耗时、scriptVersion。
-- 存储路径：`<BRIX_DATA_DIR>/runs/<runId>/`，按 TTL 清理。
-
-## 配置
-
-通过环境变量调整，未设置时取项目下默认值：
-
-- `BRIX_USER_DATA_DIR`：浏览器 profile 根目录，默认 `<projectRoot>/user-data-dir`。
-- `BRIX_PROFILE`：profile 名称（即 `BRIX_USER_DATA_DIR` 下的子目录名），默认 `default`。整个平台进程只用一个 profile；切换需重启 brix。
-- `BRIX_DATA_DIR`：诊断 / 截图 / run 历史的根目录，默认 `<projectRoot>/data`。
-
-`user-data-dir` 和 `data` 都建议加入 `.gitignore`，且不要混放在仓库目录外的共享盘上（user-data-dir 含 cookie 等敏感数据）。
-
-## 参考项目
-
-- `F:\Desktop\project\source-searcher`：提供历史搜源站点清单和旧解析逻辑参考。
-- `F:\Desktop\project\my-claw`：提供 CDP 会话、Playwright 操作、图片上传参考。
-
-## 初期开发步骤
-
-1. 建立 TypeScript / Node 22 项目骨架，搭 HTTP API 框架。
-2. 实现 browser manager：平台启动时通过 rebrowser-playwright 拉起真实 Chrome（叠加 rebrowser-patches），加载 profile，常驻管理；暴露 CDP 端点。
-3. 实现 session manager：在浏览器上分配 tab，按 sessionId 索引，按 TTL 回收。
-4. 实现 script registry：脚本存储、版本管理、JSON Schema 校验。
-5. 实现 run executor：在指定 session 的 tab 上按 step 执行，收集诊断；支持 sync / async 模式。
-6. 接入 `google-lens` 作为第一个 browser script，打通端到端。
-7. 补 `saucenao` 和 `trace-moe` 作为 API script。
-8. 给 bot 提供 `session + script` 的最小调用接口。
