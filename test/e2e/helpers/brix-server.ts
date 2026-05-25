@@ -13,7 +13,8 @@
 
 import { spawn, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { mkdtemp, rm, mkdir, writeFile } from 'node:fs/promises';
+import { createWriteStream } from 'node:fs';
+import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -110,9 +111,15 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
   const stdout = child.stdout as Readable;
   const stderr = child.stderr as Readable;
 
-  const chunks: Buffer[] = [];
+  // Write log incrementally on every chunk. Earlier we batched chunks in a
+  // Buffer[] and only flushed in stop() — that worked locally but on CI a
+  // job-level timeout cancels the test before stop() runs, so the artifact
+  // upload found an empty file and we had zero visibility into why the server
+  // hung. createWriteStream + per-chunk write means even a hard cancel leaves
+  // the captured-so-far output on disk.
+  const logStream = createWriteStream(logPath, { flags: 'a' });
   const onData = (b: Buffer): void => {
-    chunks.push(b);
+    logStream.write(b);
   };
   stdout.on('data', onData);
   stderr.on('data', onData);
@@ -128,9 +135,8 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
   try {
     await Promise.race([ready, exited]);
   } catch (e) {
-    // dump captured output to help debugging
-    await writeFile(logPath, Buffer.concat(chunks)).catch(() => { /* ignore */ });
     try { child.kill('SIGKILL'); } catch { /* ignore */ }
+    logStream.end();
     throw e;
   }
 
@@ -145,7 +151,7 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
       const t = setTimeout(() => resolveP(), 2000);
       child.once('exit', () => { clearTimeout(t); resolveP(); });
     });
-    await writeFile(logPath, Buffer.concat(chunks)).catch(() => { /* ignore */ });
+    await new Promise<void>((resolveP) => logStream.end(resolveP));
     await rm(scratch, { recursive: true, force: true }).catch(() => { /* ignore */ });
   };
 
