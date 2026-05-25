@@ -13,7 +13,7 @@
 //
 // 每个可交互元素分配 [ref=eN]，refMap 记录 ref → selector，后续 interact.click(ref) 用它定位
 
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import { getEnv } from '../config.js';
 
 export interface RefEntry {

@@ -31,7 +31,7 @@ function authed(extra: Record<string, string> = {}): Record<string, string> {
 // Source for an ad-hoc script we PUT to /scripts/dl-test. Triggers a download
 // by clicking the #dl link on the fixture page and saves it via run.saveDownload.
 const DL_SCRIPT_SOURCE = `
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import type { Run } from '../src/runs/run.js';
 
 export const meta = {

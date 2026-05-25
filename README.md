@@ -153,7 +153,7 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/sessions/$SID -i
 
 ```ts
 // scripts/my-thing.ts
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import type { Run } from '../src/runs/run.js';
 
 export const meta = {

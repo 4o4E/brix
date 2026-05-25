@@ -4,7 +4,7 @@
 //   - tab 模型：单 active page + newTab() 开新页（新页变 active）
 
 import { EventEmitter } from 'node:events';
-import { chromium, type Browser, type BrowserContext, type Page } from 'rebrowser-playwright';
+import { chromium, type Browser, type BrowserContext, type Page } from 'patchright';
 import { ensureChromeRunning } from './launcher.js';
 import { getEnv } from '../config.js';
 import { createLogger } from '../utils/logger.js';

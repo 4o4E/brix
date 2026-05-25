@@ -7,7 +7,7 @@
 //   DELETE /sessions/:sid
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import { createBrixSession, closeBrixSession, getBrixSession, listBrixSessions, touchBrixSession } from '../../sessions/registry.js';
 import { BadScriptError, NotFoundError, loadScriptModule } from '../../scripts/registry.js';
 import { createRun } from '../../runs/run.js';

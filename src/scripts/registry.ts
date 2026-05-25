@@ -110,7 +110,7 @@ export async function readScript(name: string): Promise<{ meta: ScriptMeta; sour
  * 用 ts.transpileModule 做纯语法/transpile 检查 —— in-process，不 spawn，不查 import。
  *
  * 之前用 `tsc --noEmit --noResolve` 的方案是错的：`--noResolve` 只影响"哪些文件被加入
- * 编译"，不影响 type checker 仍然 lookup `import 'rebrowser-playwright'`，结果脚本里
+ * 编译"，不影响 type checker 仍然 lookup `import 'patchright'`，结果脚本里
  * 任何 import 都吃 TS2307，把所有内置脚本都拒了。
  *
  * `ts.transpileModule` 是 TS 官方的"只 parse + emit 当前文件，不读 lib/不查 import"的

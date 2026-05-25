@@ -13,7 +13,7 @@
 import { mkdir, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { randomBytes } from 'node:crypto';
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import { getEnv } from '../src/config.js';
 import { newTab, closeSession } from '../src/browser/session.js';
 import { createLogger } from '../src/utils/logger.js';

@@ -26,7 +26,7 @@
 //   <run.dir>/stage-*.{png,html}         阶段诊断快照
 
 import { extname } from 'node:path';
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import type { Run } from '../src/runs/run.js';
 
 export const meta = {

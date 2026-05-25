@@ -3,7 +3,7 @@
 // 会话 = 框架持有一个 tab 的句柄；create 时打 newTab，close 时 page.close + 删表项。
 // 会话不写磁盘，进程重启即丢（符合"会话 = 浏览器内"语义）。
 
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import { newTab } from '../browser/session.js';
 import { nextId } from '../runs/id.js';
 import { createLogger } from '../utils/logger.js';

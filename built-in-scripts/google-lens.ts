@@ -13,7 +13,7 @@
 //   <run.dir>/upload.png              上传用的临时图片（保留以便复现）
 
 import { readFile, stat } from 'node:fs/promises';
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import type { Run } from '../src/runs/run.js';
 
 export const meta = {

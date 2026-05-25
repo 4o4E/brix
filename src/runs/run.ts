@@ -7,7 +7,7 @@
 import { mkdir, readdir, rm, stat, writeFile, access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import type { Download, Page } from 'rebrowser-playwright';
+import type { Download, Page } from 'patchright';
 import { getEnv } from '../config.js';
 import { createLogger, type Logger } from '../utils/logger.js';
 import { createBrowserRefContext, takeSnapshot, type FormatOptions } from '../browser/snapshot.js';

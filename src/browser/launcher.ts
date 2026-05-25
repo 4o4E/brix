@@ -259,6 +259,10 @@ async function launchChromeProcess(port: number): Promise<ChromeHandle> {
     `--remote-debugging-port=${port}`,
     '--no-first-run',
     '--no-default-browser-check',
+    // 移除 navigator.webdriver=true 的来源。patchright 自己 launch Chromium 时会
+    // 默认加这条；我们走的是 spawn + connectOverCDP，所以得自己加。
+    // 配合 patchright 的 Runtime.enable 规避，Google "不安全浏览器" 概率显著降低。
+    '--disable-blink-features=AutomationControlled',
   ];
   // START_MINIMIZED=true 时跳过 --start-maximized，等 CDP 起来后用
   // Browser.setWindowBounds 设 minimized；否则窗口会先最大化闪一下再缩。

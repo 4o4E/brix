@@ -8,7 +8,7 @@
 //
 // cookie 保留在 USER_DATA_DIR 中，下次 newTab 自动复用。
 
-import type { Page } from 'rebrowser-playwright';
+import type { Page } from 'patchright';
 import type { Run } from '../src/runs/run.js';
 
 export const meta = {

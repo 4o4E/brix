@@ -2,7 +2,7 @@
 // 操作完成后自动返回最新 snapshot，方便链式调用
 // 移植自 my-claw src/browser/agent.ts
 
-import type { ElementHandle, Page } from 'rebrowser-playwright';
+import type { ElementHandle, Page } from 'patchright';
 import { ensurePage } from './session.js';
 import {
   takeSnapshot,

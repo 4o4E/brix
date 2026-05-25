@@ -1,5 +1,7 @@
 node_modules/
-user-data-dir/
+# 任何 user-data-dir* 变种（user-data-dir-new、user-data-dir-test 等）都是 Chrome
+# profile，含 cookie/extension 等敏感数据，永远不能提交
+user-data-dir*/
 # data/ 包含 runs/、downloads/、chrome-cache/、crashes/ 和 scripts/
 # data/scripts/ 是 built-in-scripts/ 的运行时拷贝（serve 启动自动同步），
 # 不需要提交；用户对脚本的运行时改动也只活在这里
