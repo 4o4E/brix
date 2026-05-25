@@ -23,6 +23,8 @@ export interface EnvConfig {
   CHROME_PATH: string | null;
   /** 数据 / 日志 / run 产物根目录 */
   DATA_DIR: string;
+  /** 用户脚本根目录（CRUD scripts/*.ts） */
+  SCRIPTS_DIR: string;
   /** Chrome 默认下载目录（通过修补 Default/Preferences 的 download.default_directory 实现） */
   DOWNLOAD_DIR: string;
   /** Chrome 磁盘缓存目录（--disk-cache-dir） */
@@ -79,6 +81,9 @@ export function getEnv(): EnvConfig {
     ? resolve(process.env.BRIX_USER_DATA_DIR)
     : resolve('user-data-dir/default');
   const dataDir = process.env.BRIX_DATA_DIR ? resolve(process.env.BRIX_DATA_DIR) : resolve('data');
+  const scriptsDir = process.env.BRIX_SCRIPTS_DIR
+    ? resolve(process.env.BRIX_SCRIPTS_DIR)
+    : resolve('scripts');
   const downloadDir = process.env.BRIX_DOWNLOAD_DIR
     ? resolve(process.env.BRIX_DOWNLOAD_DIR)
     : join(dataDir, 'downloads');
@@ -97,6 +102,7 @@ export function getEnv(): EnvConfig {
     CDP_ENDPOINT: cdpEndpoint,
     CHROME_PATH: findChromeExecutable(),
     DATA_DIR: dataDir,
+    SCRIPTS_DIR: scriptsDir,
     DOWNLOAD_DIR: downloadDir,
     CACHE_DIR: cacheDir,
     CRASH_DIR: crashDir,

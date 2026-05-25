@@ -9,15 +9,18 @@
 import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { spawn } from 'node:child_process';
 import { tmpdir } from 'node:os';
-import { join, resolve } from 'node:path';
+import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import { getEnv } from '../config.js';
 import { createLogger } from '../utils/logger.js';
 import { isValidScriptName } from '../runs/mime.js';
 import { nextId } from '../runs/id.js';
 
 const log = createLogger('script-registry');
 
-const SCRIPTS_DIR = resolve('scripts');
+function scriptsDir(): string {
+  return getEnv().SCRIPTS_DIR;
+}
 
 export interface ScriptMeta {
   name: string;
@@ -37,7 +40,7 @@ export class BadScriptError extends Error {
 }
 
 function pathOf(name: string): string {
-  return join(SCRIPTS_DIR, `${name}.ts`);
+  return join(scriptsDir(), `${name}.ts`);
 }
 
 function isHidden(name: string): boolean {
@@ -64,7 +67,7 @@ async function tryReadModuleMeta(name: string): Promise<{ description?: string; 
 
 export async function listScripts(): Promise<ScriptMeta[]> {
   let entries: string[];
-  try { entries = await readdir(SCRIPTS_DIR); } catch { return []; }
+  try { entries = await readdir(scriptsDir()); } catch { return []; }
   const names = entries
     .filter((f) => f.endsWith('.ts'))
     .map((f) => f.slice(0, -3))
@@ -107,8 +110,11 @@ export async function readScript(name: string): Promise<{ meta: ScriptMeta; sour
 /**
  * 用 tsc 语法检查脚本字符串。失败抛 BadScriptError。
  * 写入临时 .ts → spawn tsc --noEmit。tsc 不在则跳过检查（项目应有 typescript devDep，正常情况下都在）。
+ *
+ * 测试用：set BRIX_SKIP_SCRIPT_TSC=1 直接跳过 spawn（tsc 慢，集成测试里我们用 isValidTS 风格的简单字符串）。
  */
 async function syntaxCheck(name: string, source: string): Promise<void> {
+  if (process.env.BRIX_SKIP_SCRIPT_TSC === '1') return;
   const tmpDir = join(tmpdir(), `brix-tsc-${nextId()}`);
   await mkdir(tmpDir, { recursive: true });
   const tmpFile = join(tmpDir, `${name}.ts`);
