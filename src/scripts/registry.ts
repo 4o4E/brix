@@ -6,11 +6,10 @@
 //   _ 开头 = 开发探索脚本（如 _explore-gemini.ts），不暴露
 //   serve.ts = HTTP 服务自己的入口，不能被自己改/删
 
-import { mkdir, readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
-import { spawn } from 'node:child_process';
-import { tmpdir } from 'node:os';
+import { readFile, readdir, rm, stat, writeFile } from 'node:fs/promises';
 import { join } from 'node:path';
 import { pathToFileURL } from 'node:url';
+import ts from 'typescript';
 import { getEnv } from '../config.js';
 import { createLogger } from '../utils/logger.js';
 import { isValidScriptName } from '../runs/mime.js';
@@ -108,42 +107,36 @@ export async function readScript(name: string): Promise<{ meta: ScriptMeta; sour
 }
 
 /**
- * 用 tsc 语法检查脚本字符串。失败抛 BadScriptError。
- * 写入临时 .ts → spawn tsc --noEmit。tsc 不在则跳过检查（项目应有 typescript devDep，正常情况下都在）。
+ * 用 ts.transpileModule 做纯语法/transpile 检查 —— in-process，不 spawn，不查 import。
  *
- * --noResolve：脚本里的 `import 'rebrowser-playwright'` 和 `'../src/runs/run.js'`
- *   解析锚点在 /tmp，看不到 repo 的 node_modules / src/，必然 TS2307。我们这一
- *   步只检查 syntax + isolated-module 约束，不验证 import 真存在 —— 真存不存在
- *   交给 dynamic-import 在 sessions 路由执行时报错。
+ * 之前用 `tsc --noEmit --noResolve` 的方案是错的：`--noResolve` 只影响"哪些文件被加入
+ * 编译"，不影响 type checker 仍然 lookup `import 'rebrowser-playwright'`，结果脚本里
+ * 任何 import 都吃 TS2307，把所有内置脚本都拒了。
  *
- * 测试用：set BRIX_SKIP_SCRIPT_TSC=1 直接跳过 spawn（tsc 慢，集成测试里我们用 isValidTS 风格的简单字符串）。
+ * `ts.transpileModule` 是 TS 官方的"只 parse + emit 当前文件，不读 lib/不查 import"的
+ * API：它只能报 syntactic 错（括号/分号/关键字），import 是否真存在不管 —— 这正是写
+ * 入时该有的边界：保证文件能被 parse，真正的 link 错误留给 dynamic-import 在 sessions
+ * 路由执行时报。
+ *
+ * 测试 escape hatch：BRIX_SKIP_SCRIPT_TSC=1 跳过检查。
  */
-async function syntaxCheck(name: string, source: string): Promise<void> {
+function syntaxCheck(source: string): void {
   if (process.env.BRIX_SKIP_SCRIPT_TSC === '1') return;
-  const tmpDir = join(tmpdir(), `brix-tsc-${nextId()}`);
-  await mkdir(tmpDir, { recursive: true });
-  const tmpFile = join(tmpDir, `${name}.ts`);
-  await writeFile(tmpFile, source);
-  try {
-    await new Promise<void>((res, rej) => {
-      const tsc = spawn('npx', ['tsc', '--noEmit', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--esModuleInterop', '--skipLibCheck', '--isolatedModules', '--noResolve', tmpFile], {
-        cwd: process.cwd(),
-        shell: process.platform === 'win32',
-        stdio: ['ignore', 'pipe', 'pipe'],
-      });
-      let stderr = '';
-      let stdout = '';
-      tsc.stdout.on('data', (d) => { stdout += d.toString(); });
-      tsc.stderr.on('data', (d) => { stderr += d.toString(); });
-      tsc.on('error', () => res());  // tsc not available → skip check
-      tsc.on('close', (code) => {
-        if (code === 0) return res();
-        rej(new BadScriptError((stdout + stderr).trim().slice(0, 4000) || `tsc exit ${code}`));
-      });
-    });
-  } finally {
-    await rm(tmpDir, { recursive: true, force: true }).catch(() => { /* ignore */ });
-  }
+  const result = ts.transpileModule(source, {
+    compilerOptions: {
+      target: ts.ScriptTarget.ES2022,
+      module: ts.ModuleKind.ESNext,
+      isolatedModules: true,
+    },
+    reportDiagnostics: true,
+  });
+  const diags = result.diagnostics ?? [];
+  if (diags.length === 0) return;
+  const msg = diags
+    .map((d) => ts.flattenDiagnosticMessageText(d.messageText, '\n'))
+    .join('\n')
+    .slice(0, 4000);
+  throw new BadScriptError(msg || 'syntax error');
 }
 
 export async function writeScript(name: string, source: string): Promise<ScriptMeta> {
@@ -151,7 +144,7 @@ export async function writeScript(name: string, source: string): Promise<ScriptM
   if (typeof source !== 'string' || source.length === 0) throw new BadScriptError('empty source');
   if (source.length > 1_000_000) throw new BadScriptError('source too large (>1MB)');
 
-  await syntaxCheck(name, source);
+  syntaxCheck(source);
 
   const p = pathOf(name);
   await writeFile(p, source);
