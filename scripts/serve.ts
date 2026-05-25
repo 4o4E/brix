@@ -11,6 +11,7 @@ import { getEnv } from '../src/config.js';
 import { createServer } from '../src/server/http.js';
 import { closeSession } from '../src/browser/session.js';
 import { createLogger } from '../src/utils/logger.js';
+import { syncBuiltins } from '../src/scripts/bootstrap.js';
 
 const log = createLogger('serve');
 
@@ -20,6 +21,9 @@ async function main() {
     console.error('BRIX_TOKEN must be set, refusing to start');
     process.exit(1);
   }
+
+  // 把内置脚本拷到 SCRIPTS_DIR；失败不致命，HTTP 仍然可响应 CRUD
+  try { await syncBuiltins(); } catch (e) { log.warn(`syncBuiltins failed: ${e instanceof Error ? e.message : e}`); }
 
   const server = createServer();
   server.listen(env.HTTP_PORT, env.HTTP_HOST, () => {

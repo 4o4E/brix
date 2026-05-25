@@ -19,9 +19,9 @@ after(async () => {
   await rm(tmpRoot, { recursive: true, force: true });
 });
 
-test('createRun: creates dir + downloads dir, 11-char runId', async () => {
+test('createRun: creates dir + downloads dir, dated runId', async () => {
   const run = await runApi.createRun();
-  assert.match(run.runId, /^[0-9A-Za-z]{11}$/);
+  assert.match(run.runId, /^\d{4}-\d{2}-\d{2}-[0-9A-Za-z]{11}$/);
   assert.ok(run.dir.startsWith(tmpRoot));
   assert.ok(run.downloadsDir.startsWith(run.dir));
   const s = await stat(run.downloadsDir);

@@ -95,6 +95,9 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
     BRIX_CDP_PORT: String(cdpPort),
     BRIX_DATA_DIR: dataDir,
     BRIX_USER_DATA_DIR: userDataDir,
+    // Pin builtins dir to the repo so cwd drift between tests (e.g. `cd` in
+    // some test setup) doesn't leave bootstrap unable to find templates.
+    BRIX_BUILTIN_SCRIPTS_DIR: join(REPO_ROOT, 'built-in-scripts'),
     BRIX_LOG_LEVEL: 'debug',
     // make IDLE_TIMEOUT_MIN big so the disconnect timer never fires mid-test
     BRIX_IDLE_TIMEOUT_MIN: '60',

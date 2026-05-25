@@ -1,275 +1,41 @@
-// brix 内置脚本：用 Gemini 网页生成图片
+// brix CLI 客户端：通过 HTTP 调用 server 上的 gemini-draw 脚本
 //
-// 用法（CLI）：
-//   npm run gemini-draw -- "<prompt>"
-//   npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
+// 用法：
+//   BRIX_TOKEN=<token> npm run gemini-draw -- "<prompt>" [--out=./out]
+//   BRIX_TOKEN=<token> npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}' [--out=./out]
 //
-// 用法（HTTP via session）：
-//   POST /sessions/:sid/scripts/gemini-draw  body: { args: { prompt: "..." } }
-//
-// 完成判定（探索得出）：
-//   - 发送按钮 aria-label 重新变回 "发送"
-//   - 新增至少 1 个 model-response（相对发送前的 baseline）
-//   - 连续 8s 无 DOM 状态变化
-//
-// 结果分流：
-//   - <single-image> 数量 > 0 → 画图成功，逐个点 "下载完整尺寸的图片"，
-//                                  Playwright 监听 download 事件 → run.saveDownload
-//   - 否则若 model-response textLength > 0 → 文字回复
-//   - 否则 → empty
-//
-// 产物：
-//   <run.downloadsDir>/image-N.<ext>     生成的图片（HTTP 暴露）
-//   <run.dir>/page.png                   结果页整页截图
-//   <run.dir>/page.html                  结果页 HTML
-//   <run.dir>/result.json                结构化结果
-//   <run.dir>/stage-*.{png,html}         阶段诊断快照
+// 要求 server 已在跑（npm run serve）；本脚本只是个 HTTP 调用方，不直接操作浏览器。
 
-import { pathToFileURL } from 'node:url';
-import { extname } from 'node:path';
-import type { Page } from 'rebrowser-playwright';
-import { createLogger } from '../src/utils/logger.js';
-import { runAsCli } from '../src/runs/cli.js';
-import type { Run } from '../src/runs/run.js';
+import { runViaBrix } from '../src/cli/brix-client.js';
 
-const log = createLogger('gemini-draw');
-
-export const meta = {
-  description: '用 Gemini 网页生成图片或文字回复，图片落到 run 的 downloads/',
-  argsExample: { prompt: '画一只猫' },
-};
-
-interface GeminiArgs {
-  prompt: string;
-}
-
-interface ImageItem {
-  index: number;
-  alt?: string;
-  blobUrl?: string;
-  savedAs: string;          // run.downloadsDir 下的文件名
-  bytes?: number;
-  suggestedFilename?: string;
-}
-
-export interface GeminiOutput {
-  prompt: string;
-  mode: 'image' | 'text' | 'empty';
-  images: ImageItem[];
-  text: string;
-  finalUrl: string;
-  durationMs: number;
-}
-
-interface PageState {
-  sendBtnLabel: string | null;
-  modelResponseCount: number;
-  singleImageCount: number;
-  downloadBtnCount: number;
-  textLength: number;
-  loadingHint: string | null;
-}
-
-function coerceArgs(args: unknown): GeminiArgs {
-  if (typeof args === 'string') return { prompt: args };
-  if (Array.isArray(args) && typeof args[0] === 'string') return { prompt: args[0] };
-  if (args && typeof args === 'object' && typeof (args as { prompt?: unknown }).prompt === 'string') {
-    return { prompt: (args as { prompt: string }).prompt };
+function parseArgv(): { args: unknown; out?: string } {
+  const argv = process.argv.slice(2);
+  let out: string | undefined;
+  let jsonArgs: unknown | undefined;
+  const positional: string[] = [];
+  for (let i = 0; i < argv.length; i++) {
+    const a = argv[i];
+    if (a === '--json-args' && i + 1 < argv.length) { try { jsonArgs = JSON.parse(argv[++i]); } catch { /* ignore */ } continue; }
+    if (a.startsWith('--json-args=')) { try { jsonArgs = JSON.parse(a.slice('--json-args='.length)); } catch { /* ignore */ } continue; }
+    if (a === '--out' && i + 1 < argv.length) { out = argv[++i]; continue; }
+    if (a.startsWith('--out=')) { out = a.slice('--out='.length); continue; }
+    positional.push(a);
   }
-  throw new Error('gemini-draw: args.prompt (string) is required');
-}
-
-async function snap(page: Page, run: Run, tag: string) {
-  try {
-    const png = await page.screenshot({ fullPage: true });
-    await run.writeArtifact(`stage-${tag}.png`, png);
-  } catch { /* ignore */ }
-  try {
-    const html = await page.content();
-    await run.writeArtifact(`stage-${tag}.html`, html);
-  } catch { /* ignore */ }
-  log.info(`stage=${tag}`);
-}
-
-async function getState(page: Page): Promise<PageState> {
-  return (await page.evaluate(() => {
-    const $$ = (sel: string) => Array.from(document.querySelectorAll(sel));
-    const sendBtn = document.querySelector('button[aria-label="发送"], button[aria-label="停止响应"]') as HTMLButtonElement | null;
-    const downloadBtns = $$('button').filter((b) => /下载|Download/i.test(b.getAttribute('aria-label') || ''));
-    const textNodes = $$('model-response .markdown, model-response message-content, model-response .model-response-text');
-    const textLength = textNodes.reduce((s, n) => s + (n.textContent?.length || 0), 0);
-    const bodyText = document.body.textContent || '';
-    const loadingMatch = bodyText.match(/正在创建您的图片|正在创建|正在生成|Generating image|Creating your image/);
-    return {
-      sendBtnLabel: sendBtn ? sendBtn.getAttribute('aria-label') : null,
-      modelResponseCount: $$('model-response').length,
-      singleImageCount: $$('single-image').length,
-      downloadBtnCount: downloadBtns.length,
-      textLength,
-      loadingHint: loadingMatch ? loadingMatch[0] : null,
-    };
-  })) as PageState;
-}
-
-function stateChanged(a: PageState, b: PageState): boolean {
-  return (
-    a.sendBtnLabel !== b.sendBtnLabel ||
-    a.modelResponseCount !== b.modelResponseCount ||
-    a.singleImageCount !== b.singleImageCount ||
-    a.downloadBtnCount !== b.downloadBtnCount ||
-    a.loadingHint !== b.loadingHint ||
-    Math.abs(a.textLength - b.textLength) > 5
-  );
-}
-
-async function waitForResponseComplete(page: Page, baselineModelCount: number): Promise<PageState> {
-  const idleMs = 8_000;
-  const maxMs = 240_000;
-  const start = Date.now();
-  let last = await getState(page);
-  let lastChangeMs = Date.now();
-
-  while (Date.now() - start < maxMs) {
-    await page.waitForTimeout(500);
-    let cur: PageState;
-    try {
-      cur = await getState(page);
-    } catch (e) {
-      log.warn(`getState err: ${e instanceof Error ? e.message : e}`);
-      continue;
-    }
-    if (stateChanged(last, cur)) {
-      log.debug(`state change at +${Date.now() - start}ms: sendBtn=${cur.sendBtnLabel} model=${cur.modelResponseCount} img=${cur.singleImageCount} dl=${cur.downloadBtnCount} text=${cur.textLength} loading=${cur.loadingHint}`);
-      lastChangeMs = Date.now();
-      last = cur;
-    }
-    if (
-      cur.modelResponseCount > baselineModelCount &&
-      cur.sendBtnLabel === '发送' &&
-      Date.now() - lastChangeMs >= idleMs
-    ) {
-      return cur;
-    }
+  if (jsonArgs !== undefined) return { args: jsonArgs, out };
+  if (!positional[0]) {
+    console.error('用法: npm run gemini-draw -- "<prompt>" [--out=./out]');
+    process.exit(1);
   }
-  log.warn(`response not stable within ${maxMs}ms, returning last observed state`);
-  return last;
+  return { args: { prompt: positional[0] }, out };
 }
 
-async function downloadImages(page: Page, run: Run): Promise<ImageItem[]> {
-  const wrappers = page.locator('single-image');
-  const count = await wrappers.count();
-  log.info(`single-image count=${count}, downloading...`);
-  const items: ImageItem[] = [];
-
-  for (let i = 0; i < count; i++) {
-    const wrap = wrappers.nth(i);
-    const blobUrl = await wrap.locator('img').first().getAttribute('src').catch(() => null);
-    const alt = await wrap.locator('img').first().getAttribute('alt').catch(() => null);
-    const dlBtn = wrap.locator('button[aria-label*="下载"], button[aria-label*="Download"]').first();
-    if ((await dlBtn.count()) === 0) {
-      log.warn(`single-image #${i} has no download button, skip`);
-      continue;
-    }
-
-    try {
-      const [download] = await Promise.all([
-        page.waitForEvent('download', { timeout: 30_000 }),
-        dlBtn.click({ timeout: 10_000 }),
-      ]);
-      const suggested = download.suggestedFilename();
-      const ext = extname(suggested).toLowerCase() || '.png';
-      const saved = await run.saveDownload(download, `image-${i}${ext}`);
-      log.info(`downloaded #${i} ${saved.bytes} bytes -> ${saved.name}`);
-      items.push({
-        index: i,
-        alt: alt || undefined,
-        blobUrl: blobUrl || undefined,
-        savedAs: saved.name,
-        bytes: saved.bytes,
-        suggestedFilename: suggested,
-      });
-    } catch (e) {
-      log.warn(`download #${i} failed: ${e instanceof Error ? e.message : e}`);
-    }
-  }
-  return items;
+async function main() {
+  const { args, out } = parseArgv();
+  const result = await runViaBrix('gemini-draw', args, { url: 'https://gemini.google.com/app', out });
+  console.log(JSON.stringify(result));
 }
 
-async function extractLastResponseText(page: Page): Promise<string> {
-  return (await page.evaluate(() => {
-    const all = Array.from(document.querySelectorAll('model-response'));
-    const last = all[all.length - 1];
-    if (!last) return '';
-    return (last.textContent || '').trim();
-  })) as string;
-}
-
-export async function runInSession(page: Page, args: unknown, run: Run): Promise<GeminiOutput> {
-  const { prompt } = coerceArgs(args);
-  const t0 = Date.now();
-  log.info(`runId=${run.runId} prompt="${prompt}"`);
-
-  if (!/^https?:\/\/gemini\.google\.com\//.test(page.url())) {
-    log.info('not on gemini, goto gemini.google.com/app');
-    await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => { /* ignore */ });
-    await page.waitForTimeout(1_500);
-  }
-  await snap(page, run, '01-loaded');
-
-  const input = await page.waitForSelector(
-    'div.ql-editor[contenteditable="true"][role="textbox"]',
-    { state: 'visible', timeout: 30_000 },
-  );
-
-  await page.evaluate('window.__name = window.__name || function(fn){return fn;};');
-  const baseline = await getState(page);
-  log.info(`baseline modelResponseCount=${baseline.modelResponseCount}`);
-
-  await input.click();
-  await page.keyboard.press('Control+A').catch(() => { /* ignore */ });
-  await page.keyboard.press('Delete').catch(() => { /* ignore */ });
-  await page.keyboard.type(prompt, { delay: 8 });
-  await page.waitForTimeout(300);
-
-  const sendBtn = await page.waitForSelector('button[aria-label="发送"]', { state: 'visible', timeout: 5_000 });
-  await sendBtn.click();
-  log.info('send clicked, waiting for response');
-  await snap(page, run, '02-sent');
-
-  const final = await waitForResponseComplete(page, baseline.modelResponseCount);
-  log.info(`response done: singleImage=${final.singleImageCount} text=${final.textLength} download=${final.downloadBtnCount}`);
-  await snap(page, run, '03-response-done');
-
-  const images = final.singleImageCount > 0 ? await downloadImages(page, run) : [];
-  const text = images.length === 0 ? await extractLastResponseText(page) : '';
-  const mode: GeminiOutput['mode'] = images.length > 0 ? 'image' : text ? 'text' : 'empty';
-
-  const screenshot = await page.screenshot({ fullPage: true });
-  await run.writeArtifact('page.png', screenshot);
-  await run.writeArtifact('page.html', await page.content());
-
-  const output: GeminiOutput = {
-    prompt,
-    mode,
-    images,
-    text,
-    finalUrl: page.url(),
-    durationMs: Date.now() - t0,
-  };
-  await run.writeArtifact('result.json', JSON.stringify({ runId: run.runId, ...output }, null, 2));
-  log.info(`done in ${output.durationMs}ms mode=${mode} images=${images.length}`);
-  return output;
-}
-
-if (import.meta.url === pathToFileURL(process.argv[1]).href) {
-  await runAsCli(runInSession, {
-    parseArgv: (positional) => {
-      if (!positional[0]) {
-        console.error('用法: npm run gemini-draw -- "<prompt>"');
-        process.exit(1);
-      }
-      return { prompt: positional[0] };
-    },
-  });
-}
+main().catch((e) => {
+  console.error(e instanceof Error ? e.stack ?? e.message : String(e));
+  process.exit(1);
+});

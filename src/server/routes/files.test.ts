@@ -18,9 +18,9 @@ let baseUrl: string;
 let stop: () => Promise<void>;
 let runsRoot: string;
 
-// 已知 runId（11 字符 base62，符合 isValidRunId）
-const RUN_ID = 'TestRunId00';
-const EMPTY_RUN_ID = 'EmptyRun001';
+// 已知 runId（YYYY-MM-DD-<11 字符 base62>，符合 isValidRunId）
+const RUN_ID = '2026-05-25-TestRunId00';
+const EMPTY_RUN_ID = '2026-05-25-EmptyRun001';
 
 before(async () => {
   const srv = createServer();

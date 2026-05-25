@@ -7,9 +7,10 @@
 import { mkdir, readdir, rm, stat, writeFile, access } from 'node:fs/promises';
 import { constants as fsConstants } from 'node:fs';
 import { join, resolve, sep } from 'node:path';
-import type { Download } from 'rebrowser-playwright';
+import type { Download, Page } from 'rebrowser-playwright';
 import { getEnv } from '../config.js';
-import { createLogger } from '../utils/logger.js';
+import { createLogger, type Logger } from '../utils/logger.js';
+import { createBrowserRefContext, takeSnapshot, type FormatOptions } from '../browser/snapshot.js';
 import { nextId } from './id.js';
 import { isValidName, isValidRunId, mimeOf, sanitizeName } from './mime.js';
 
@@ -22,13 +23,26 @@ export interface DownloadedFile {
   downloadedAt: number;
 }
 
+export interface SnapshotResult {
+  snapshot: string;
+  refCount: number;
+  refs: Record<string, { role: string; name?: string; selector: string }>;
+}
+
+/**
+ * 一次 run 的上下文对象。脚本 runInSession 收到它作为第三参数，业务里所有运行时
+ * 依赖（log、saveDownload、takeSnapshot 等）都通过这里访问 —— 脚本本身不需要
+ * import 任何 brix 内部模块，从 built-in-scripts/ 拷到 data/scripts/ 后仍能跑。
+ */
 export interface Run {
   runId: string;
   dir: string;
   downloadsDir: string;
+  log: Logger;
   saveDownload(d: Download, name?: string): Promise<DownloadedFile>;
   writeArtifact(name: string, data: Buffer | string): Promise<string>;
   listDownloads(): Promise<DownloadedFile[]>;
+  takeSnapshot(page: Page, opts?: { scope?: string } & Partial<FormatOptions>): Promise<SnapshotResult>;
 }
 
 export class NotFoundError extends Error {
@@ -57,11 +71,24 @@ export async function createRun(): Promise<Run> {
 }
 
 class RunImpl implements Run {
+  public readonly log: Logger;
   constructor(
     public readonly runId: string,
     public readonly dir: string,
     public readonly downloadsDir: string,
-  ) {}
+  ) {
+    this.log = createLogger(`run-${runId}`);
+  }
+
+  async takeSnapshot(page: Page, opts: { scope?: string } & Partial<FormatOptions> = {}): Promise<SnapshotResult> {
+    const { scope, ...formatOpts } = opts;
+    const ctx = createBrowserRefContext();
+    const snapshot = await takeSnapshot(page, scope, ctx, formatOpts);
+    const refs = Object.fromEntries(
+      Array.from(ctx.refMap.entries()).map(([k, v]) => [k, { role: v.role, name: v.name, selector: v.selector }]),
+    );
+    return { snapshot, refCount: ctx.refCounter, refs };
+  }
 
   async saveDownload(d: Download, name?: string): Promise<DownloadedFile> {
     const existing = await readdir(this.downloadsDir).catch(() => []);

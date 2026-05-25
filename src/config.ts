@@ -21,8 +21,10 @@ export interface EnvConfig {
   CHROME_PATH: string | null;
   /** 数据 / 日志 / run 产物根目录 */
   DATA_DIR: string;
-  /** 用户脚本根目录（CRUD scripts/*.ts） */
+  /** 运行时脚本目录（HTTP CRUD scripts/*.ts 的对象），默认 <DATA_DIR>/scripts */
   SCRIPTS_DIR: string;
+  /** 内置 DOM 脚本模板目录；serve 启动时缺啥拷啥到 SCRIPTS_DIR */
+  BUILTIN_SCRIPTS_DIR: string;
   /** Chrome 默认下载目录（通过修补 Default/Preferences 的 download.default_directory 实现） */
   DOWNLOAD_DIR: string;
   /** Chrome 磁盘缓存目录（--disk-cache-dir） */
@@ -91,7 +93,10 @@ export function getEnv(): EnvConfig {
   const dataDir = process.env.BRIX_DATA_DIR ? resolve(process.env.BRIX_DATA_DIR) : resolve('data');
   const scriptsDir = process.env.BRIX_SCRIPTS_DIR
     ? resolve(process.env.BRIX_SCRIPTS_DIR)
-    : resolve('scripts');
+    : join(dataDir, 'scripts');
+  const builtinScriptsDir = process.env.BRIX_BUILTIN_SCRIPTS_DIR
+    ? resolve(process.env.BRIX_BUILTIN_SCRIPTS_DIR)
+    : resolve('built-in-scripts');
   const downloadDir = process.env.BRIX_DOWNLOAD_DIR
     ? resolve(process.env.BRIX_DOWNLOAD_DIR)
     : join(dataDir, 'downloads');
@@ -112,6 +117,7 @@ export function getEnv(): EnvConfig {
     CHROME_PATH: findChromeExecutable(),
     DATA_DIR: dataDir,
     SCRIPTS_DIR: scriptsDir,
+    BUILTIN_SCRIPTS_DIR: builtinScriptsDir,
     DOWNLOAD_DIR: downloadDir,
     CACHE_DIR: cacheDir,
     CRASH_DIR: crashDir,

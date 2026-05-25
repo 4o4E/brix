@@ -2,12 +2,19 @@ import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { nextId } from './id.js';
 
-const BASE62_RE = /^[0-9A-Za-z]{11}$/;
+const ID_RE = /^\d{4}-\d{2}-\d{2}-[0-9A-Za-z]{11}$/;
 
-test('nextId: 11 chars, base62 alphabet', () => {
+test('nextId: YYYY-MM-DD-<11char base62> shape', () => {
   for (let i = 0; i < 100; i++) {
-    assert.match(nextId(), BASE62_RE);
+    assert.match(nextId(), ID_RE);
   }
+});
+
+test('nextId: date prefix matches local today', () => {
+  const id = nextId();
+  const d = new Date();
+  const expected = `${d.getFullYear()}-${String(d.getMonth() + 1).padStart(2, '0')}-${String(d.getDate()).padStart(2, '0')}`;
+  assert.ok(id.startsWith(expected + '-'), `id=${id} expected prefix=${expected}-`);
 });
 
 test('nextId: 10000 consecutive calls all unique', () => {
@@ -16,13 +23,16 @@ test('nextId: 10000 consecutive calls all unique', () => {
   assert.equal(seen.size, 10000);
 });
 
-test('nextId: strictly increasing as base62 strings', () => {
-  // base62 alphabet 0-9A-Za-z is lexicographically ordered, and IDs are
-  // fixed-width, so lexicographic compare == numeric compare.
+test('nextId: strictly increasing as strings within a single date', () => {
+  // The date prefix is lexicographically sortable (YYYY-MM-DD with zero-pad)
+  // and the base62 suffix is monotonic-in-ms-then-seq, so the whole string is
+  // strictly increasing when consecutive IDs share a date.
   let last = nextId();
   for (let i = 0; i < 5000; i++) {
     const cur = nextId();
-    assert.ok(cur > last, `expected ${cur} > ${last} at i=${i}`);
+    if (cur.slice(0, 10) === last.slice(0, 10)) {
+      assert.ok(cur > last, `expected ${cur} > ${last} at i=${i}`);
+    }
     last = cur;
   }
 });

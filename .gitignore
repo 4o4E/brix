@@ -1,6 +1,10 @@
 node_modules/
 user-data-dir/
+# data/ 包含 runs/、downloads/、chrome-cache/、crashes/ 和 scripts/
+# data/scripts/ 是 built-in-scripts/ 的运行时拷贝（serve 启动自动同步），
+# 不需要提交；用户对脚本的运行时改动也只活在这里
 data/
+out/
 dist/
 *.log
 .env

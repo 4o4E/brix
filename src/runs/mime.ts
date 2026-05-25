@@ -37,7 +37,9 @@ export function mimeOf(filename: string): string {
 }
 
 const NAME_RE = /^[A-Za-z0-9._-]{1,255}$/;
-const RUN_ID_RE = /^[A-Za-z0-9._-]{1,128}$/;
+// runId 形如 "2026-05-25-8KqL2nQrM5x"：local 日期 + 11 字符 base62。
+// 严格匹配防 path traversal —— `..` 这种通用 deny-list 也保留为兜底。
+const RUN_ID_RE = /^\d{4}-\d{2}-\d{2}-[0-9A-Za-z]{11}$/;
 const SCRIPT_NAME_RE = /^[a-z0-9][a-z0-9-]{0,63}$/;
 
 export function isValidName(name: string): boolean {

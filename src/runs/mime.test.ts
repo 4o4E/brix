@@ -36,10 +36,14 @@ test('isValidName: rejects bad inputs', () => {
   assert.ok(!isValidName('null\0byte'));         // null byte
 });
 
-test('isValidRunId: same family, 128 max', () => {
-  assert.ok(isValidRunId('8KqL2nQrM5x'));
-  assert.ok(isValidRunId('A'.repeat(128)));
-  assert.ok(!isValidRunId('A'.repeat(129)));
+test('isValidRunId: YYYY-MM-DD-<11-char base62> only', () => {
+  assert.ok(isValidRunId('2026-05-25-8KqL2nQrM5x'));
+  assert.ok(isValidRunId('2024-01-01-00000000000'));
+  assert.ok(!isValidRunId('8KqL2nQrM5x'));               // bare snowflake (pre-refactor)
+  assert.ok(!isValidRunId('2026-5-25-8KqL2nQrM5x'));     // unpadded month
+  assert.ok(!isValidRunId('2026-05-25-8KqL2nQrM5'));     // 10-char base62
+  assert.ok(!isValidRunId('2026-05-25-8KqL2nQrM5xx'));   // 12-char base62
+  assert.ok(!isValidRunId('A'.repeat(128)));
   assert.ok(!isValidRunId('../etc/passwd'));
   assert.ok(!isValidRunId('.hidden'));
   assert.ok(!isValidRunId(''));
