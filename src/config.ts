@@ -15,10 +15,8 @@ export type LogLevel = 'debug' | 'info' | 'warn' | 'error';
 export interface EnvConfig {
   /** 用户数据目录（profile） */
   USER_DATA_DIR: string;
-  /** Chrome remote debugging 端口 */
+  /** Chrome remote debugging 端口；0 = 自动挑空闲端口（从 DevToolsActivePort 读真实值） */
   CDP_PORT: number;
-  /** CDP HTTP 端点（http://...） */
-  CDP_ENDPOINT: string;
   /** Chrome 可执行文件路径，找不到则启动时报错 */
   CHROME_PATH: string | null;
   /** 数据 / 日志 / run 产物根目录 */
@@ -43,6 +41,8 @@ export interface EnvConfig {
   HTTP_HOST: string;
   /** HTTP 监听端口，默认 9233 */
   HTTP_PORT: number;
+  /** Chrome 启动后是否最小化窗口（通过 CDP Browser.setWindowBounds），默认 true */
+  START_MINIMIZED: boolean;
 }
 
 const CHROME_CANDIDATES = [
@@ -64,6 +64,14 @@ function intEnv(name: string, def: number): number {
   if (!raw) return def;
   const n = Number(raw);
   return Number.isFinite(n) ? n : def;
+}
+
+function boolEnv(name: string, def: boolean): boolean {
+  const raw = process.env[name]?.trim().toLowerCase();
+  if (!raw) return def;
+  if (raw === 'true' || raw === '1' || raw === 'yes' || raw === 'on') return true;
+  if (raw === 'false' || raw === '0' || raw === 'no' || raw === 'off') return false;
+  return def;
 }
 
 function levelEnv(name: string, def: LogLevel): LogLevel {
@@ -93,13 +101,14 @@ export function getEnv(): EnvConfig {
   const crashDir = process.env.BRIX_CRASH_DIR
     ? resolve(process.env.BRIX_CRASH_DIR)
     : join(dataDir, 'chrome-crashes');
-  const cdpPort = intEnv('BRIX_CDP_PORT', 9222);
-  const cdpEndpoint = process.env.BRIX_CDP_URL || `http://127.0.0.1:${cdpPort}`;
+  // 默认 0 = 让 chrome 自动挑空闲端口（spawn 后从 DevToolsActivePort 读出来）。
+  // 用固定端口在 Windows 上经常撞 Hyper-V/WSL2 的 excluded port range（如 9178-9277
+  // 包含 9222），chrome bind 失败、CDP 永远不上。固定端口仅在外部需要稳定 attach 时配。
+  const cdpPort = intEnv('BRIX_CDP_PORT', 0);
 
   cached = {
     USER_DATA_DIR: userDataDir,
     CDP_PORT: cdpPort,
-    CDP_ENDPOINT: cdpEndpoint,
     CHROME_PATH: findChromeExecutable(),
     DATA_DIR: dataDir,
     SCRIPTS_DIR: scriptsDir,
@@ -112,6 +121,7 @@ export function getEnv(): EnvConfig {
     HTTP_TOKEN: process.env.BRIX_TOKEN?.trim() || null,
     HTTP_HOST: process.env.BRIX_HTTP_HOST?.trim() || '0.0.0.0',
     HTTP_PORT: intEnv('BRIX_HTTP_PORT', 9233),
+    START_MINIMIZED: boolEnv('BRIX_CHROME_START_MINIMIZED', true),
   };
   return cached;
 }

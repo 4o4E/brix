@@ -98,6 +98,11 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
     BRIX_LOG_LEVEL: 'debug',
     // make IDLE_TIMEOUT_MIN big so the disconnect timer never fires mid-test
     BRIX_IDLE_TIMEOUT_MIN: '60',
+    // Under xvfb on CI minimize is meaningless and the post-launch CDP round
+    // trip just adds startup latency. Local windows-host runs of `npm run e2e`
+    // also don't want a window flicker. Tests assert on protocol/output, not
+    // visual state, so opt out unconditionally for e2e.
+    BRIX_CHROME_START_MINIMIZED: 'false',
     ...opts.extraEnv,
   };
   // ensure BRIX_CHROME_PATH from outer env makes it through; on Linux CI the
