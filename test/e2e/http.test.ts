@@ -60,8 +60,12 @@ describe('brix HTTP e2e', () => {
       headers: authed(),
       body: JSON.stringify({ url: `${fixture.baseUrl}/` }),
     });
-    assert.equal(createRes.status, 201, `create session: ${createRes.status} ${await createRes.text().catch(() => '')}`);
-    const created = (await createRes.json()) as { sessionId: string; url: string };
+    // Read body ONCE — assert.equal's message template is evaluated eagerly,
+    // so `await createRes.text()` in the message consumes the body before
+    // json() can read it. Pull text first, then parse.
+    const createText = await createRes.text();
+    assert.equal(createRes.status, 201, `create session: ${createRes.status} ${createText}`);
+    const created = JSON.parse(createText) as { sessionId: string; url: string };
     assert.ok(created.sessionId, 'sessionId present');
     assert.match(created.url, /127\.0\.0\.1/, 'session opened the fixture URL');
     const sid = created.sessionId;

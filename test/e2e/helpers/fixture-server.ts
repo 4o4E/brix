@@ -56,6 +56,11 @@ export async function startFixtureServer(): Promise<FixtureServer> {
       resolve();
     });
   });
+  // Don't let an open listening socket keep the test process alive past
+  // the after() hooks. Without unref(), Node waits for the server to be
+  // closed (which can hang if a client never properly FINs its connection,
+  // e.g. an orphan Chrome we couldn't reach to kill).
+  server.unref();
 
   const addr = server.address() as AddressInfo;
   const baseUrl = `http://127.0.0.1:${addr.port}`;
@@ -63,7 +68,14 @@ export async function startFixtureServer(): Promise<FixtureServer> {
   return {
     baseUrl,
     close(): Promise<void> {
-      return new Promise<void>((resolve) => server.close(() => resolve()));
+      // Forcibly drop any keep-alive connections (Chrome from the test may
+      // still be holding one open), otherwise server.close() waits forever
+      // for them to drain.
+      try { server.closeAllConnections(); } catch { /* node < 18.2 */ }
+      return new Promise<void>((resolve) => {
+        const t = setTimeout(() => resolve(), 3000).unref();
+        server.close(() => { clearTimeout(t); resolve(); });
+      });
     },
   };
 }

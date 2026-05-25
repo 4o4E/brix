@@ -62,16 +62,32 @@ jobs:
           sudo apt-get update
           sudo apt-get install -y xvfb
 
-      - name: Run E2E tests (xvfb + real Chrome)
+      - name: Print Chrome version
         env:
           BRIX_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
-          # GH runner 没 user namespace 沙箱 + /dev/shm 只 64MB，
-          # 不加这两个 chrome 直接起不来。本机不要传，避免动指纹。
-          BRIX_CHROME_EXTRA_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu"
         run: |
           echo "Using Chrome at: $BRIX_CHROME_PATH"
           "$BRIX_CHROME_PATH" --version || true
-          xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run e2e
+
+      # 分两步跑而不是 `npm run e2e`：每个文件单独一个 step，超时和退出
+      # 状态独立。上一轮 CI 上 downloads.test.ts 通过、http.test.ts 卡住，
+      # 但合并跑时下载脚本的状态混进总输出里很难看清。拆开后任意一个挂
+      # 也能立刻定位是哪个，artifact 上传时各自的 /tmp/brix-e2e-* 也都
+      # 还在（没被对方的 stop() 清掉）。
+      - name: E2E - downloads.test.ts
+        env:
+          BRIX_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          BRIX_CHROME_EXTRA_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu"
+        timeout-minutes: 3
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npx tsx --test --test-force-exit test/e2e/downloads.test.ts
+
+      - name: E2E - http.test.ts
+        if: always()
+        env:
+          BRIX_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          BRIX_CHROME_EXTRA_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu"
+        timeout-minutes: 4
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npx tsx --test --test-force-exit test/e2e/http.test.ts
 
       - name: Upload brix stdio logs
         if: always()

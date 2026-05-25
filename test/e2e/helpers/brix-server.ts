@@ -105,6 +105,10 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
   if (process.env.BRIX_CHROME_PATH) env.BRIX_CHROME_PATH = process.env.BRIX_CHROME_PATH;
 
   const isWin = process.platform === 'win32';
+  // On Windows npx.cmd is a .cmd batch file → child_process.spawn with
+  // shell:false rejects it as EINVAL; need shell:true so cmd.exe runs it.
+  // On Linux/CI npx is a JS script with a shebang — shell:false is fine
+  // and slightly safer (no shell quoting surprises).
   const child: ChildProcess = spawn(
     isWin ? 'npx.cmd' : 'npx',
     ['tsx', 'scripts/serve.ts'],
@@ -112,7 +116,7 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
       cwd: REPO_ROOT,
       env,
       stdio: ['ignore', 'pipe', 'pipe'],
-      shell: false,
+      shell: isWin,
       windowsHide: true,
     },
   );
@@ -154,40 +158,58 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
     stopped = true;
     try { child.kill('SIGKILL'); } catch { /* ignore */ }
     // wait briefly for exit so logs flush
-    await new Promise<void>((resolveP) => {
+    await raceTimeout(new Promise<void>((resolveP) => {
       if (child.exitCode !== null) { resolveP(); return; }
       const t = setTimeout(() => resolveP(), 2000);
       child.once('exit', () => { clearTimeout(t); resolveP(); });
-    });
+    }), 3000);
     // Chrome was spawned `detached: true` by src/browser/launcher.ts and is
     // NOT a child of the brix server, so killing the server doesn't reach
-    // it. On Linux CI we leave a zombie Chrome holding its CDP port + xvfb
-    // resources between tests, which seems to wedge the next test's first
-    // session creation. Cheap targeted cleanup: pgrep -f for any process
-    // whose cmdline contains our unique user-data-dir, SIGKILL them.
+    // it. On Linux CI we'd leave a zombie Chrome holding its CDP port +
+    // xvfb resources between tests, wedging the next test's first session
+    // creation. On Windows it holds files open in user-data-dir and makes
+    // the subsequent fs.rm hang waiting for handles to close. Either way:
+    // pkill -KILL -f <userDataDir> to clear it.
     killChromeByUserDataDir(userDataDir);
-    await new Promise<void>((resolveP) => logStream.end(resolveP));
-    await rm(scratch, { recursive: true, force: true }).catch(() => { /* ignore */ });
+    await raceTimeout(new Promise<void>((resolveP) => logStream.end(resolveP)), 2000);
+    // fs.rm with recursive+force can still hang on Windows when Chrome (now
+    // killed but its handles may not be released instantly) is holding
+    // user-data-dir/Default/Cookies etc. Race against a timeout so stop()
+    // is guaranteed to return — leaving a stray /tmp/brix-e2e-XXX dir is
+    // far better than wedging the whole test run. The mkdtemp prefix means
+    // it's trivially clean-up-able by the user.
+    await raceTimeout(rm(scratch, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 }).catch(() => { /* ignore */ }), 5000);
   };
 
   return { baseUrl, token, httpPort, cdpPort, dataDir, userDataDir, logPath, stop };
 }
 
+/** Resolve `p` if it finishes within `ms`, otherwise resolve void anyway. Never rejects. */
+function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T | void> {
+  return Promise.race<T | void>([
+    p.catch(() => undefined),
+    new Promise<void>((res) => setTimeout(res, ms).unref()),
+  ]);
+}
+
 /**
- * pgrep -f to find any process whose cmdline contains userDataDir, then
- * SIGKILL them. Linux/macOS only — on Windows we don't run CI. Best-effort:
- * pgrep not installed → just return.
+ * Best-effort kill of any process whose cmdline contains userDataDir.
+ * Targets the orphan Chrome that launcher.ts started with detached:true
+ * (and thus survived `child.kill` on the brix server child). Linux/macOS
+ * only — Windows doesn't run CI.
+ *
+ * pkill -KILL -f matches the pattern against the full cmdline AND signals
+ * everything that matches, which is better than pgrep+process.kill because
+ * Chrome spawns zygote/renderer/GPU helpers — many of which also carry
+ * `--user-data-dir=<path>` and need cleaning up. SIGKILL (not SIGTERM)
+ * because we don't care about graceful shutdown, only that the next
+ * spawn isn't fighting over xvfb / RAM / fds.
  */
 function killChromeByUserDataDir(userDataDir: string): void {
   if (process.platform === 'win32') return;
   try {
-    const r = spawnSync('pgrep', ['-f', userDataDir], { encoding: 'utf-8' });
-    if (r.status !== 0 || !r.stdout) return;
-    const pids = r.stdout.split(/\s+/).filter(Boolean).map((s) => Number(s)).filter((n) => Number.isFinite(n));
-    for (const pid of pids) {
-      try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
-    }
-  } catch { /* pgrep not present */ }
+    spawnSync('pkill', ['-KILL', '-f', userDataDir], { encoding: 'utf-8', timeout: 5000 });
+  } catch { /* pkill not present */ }
 }
 
 function waitForLine(stdout: Readable, stderr: Readable, re: RegExp, timeoutMs: number): Promise<void> {
