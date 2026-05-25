@@ -111,6 +111,11 @@ export async function readScript(name: string): Promise<{ meta: ScriptMeta; sour
  * 用 tsc 语法检查脚本字符串。失败抛 BadScriptError。
  * 写入临时 .ts → spawn tsc --noEmit。tsc 不在则跳过检查（项目应有 typescript devDep，正常情况下都在）。
  *
+ * --noResolve：脚本里的 `import 'rebrowser-playwright'` 和 `'../src/runs/run.js'`
+ *   解析锚点在 /tmp，看不到 repo 的 node_modules / src/，必然 TS2307。我们这一
+ *   步只检查 syntax + isolated-module 约束，不验证 import 真存在 —— 真存不存在
+ *   交给 dynamic-import 在 sessions 路由执行时报错。
+ *
  * 测试用：set BRIX_SKIP_SCRIPT_TSC=1 直接跳过 spawn（tsc 慢，集成测试里我们用 isValidTS 风格的简单字符串）。
  */
 async function syntaxCheck(name: string, source: string): Promise<void> {
@@ -121,7 +126,7 @@ async function syntaxCheck(name: string, source: string): Promise<void> {
   await writeFile(tmpFile, source);
   try {
     await new Promise<void>((res, rej) => {
-      const tsc = spawn('npx', ['tsc', '--noEmit', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--esModuleInterop', '--skipLibCheck', '--isolatedModules', tmpFile], {
+      const tsc = spawn('npx', ['tsc', '--noEmit', '--target', 'ES2022', '--module', 'NodeNext', '--moduleResolution', 'NodeNext', '--esModuleInterop', '--skipLibCheck', '--isolatedModules', '--noResolve', tmpFile], {
         cwd: process.cwd(),
         shell: process.platform === 'win32',
         stdio: ['ignore', 'pipe', 'pipe'],
