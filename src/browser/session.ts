@@ -3,6 +3,7 @@
 //   - 不做 tab 切换 / subagent 分配
 //   - tab 模型：单 active page + newTab() 开新页（新页变 active）
 
+import { EventEmitter } from 'node:events';
 import { chromium, type Browser, type BrowserContext, type Page } from 'rebrowser-playwright';
 import { ensureChromeRunning } from './launcher.js';
 import { getEnv } from '../config.js';
@@ -15,6 +16,16 @@ let context: BrowserContext | null = null;
 let pages: Page[] = [];
 let activePageIndex = 0;
 let idleTimer: ReturnType<typeof setTimeout> | null = null;
+// 标记 closeSession() 在进行中，让 browser.on('disconnected') 区分
+// "我们主动关的"（idle timer / shutdown / 测试 reset）和 "用户关了 Chrome 窗口"
+let closingExplicitly = false;
+
+/**
+ * 浏览器生命周期事件总线。
+ *  - 'user-closed' —— 检测到用户/外部关掉了 Chrome（CDP 突然断），不是我们主动 closeSession 触发的
+ *    serve.ts 订阅这个事件来触发进程退出。
+ */
+export const browserEvents = new EventEmitter();
 
 // 全局兜底：捕获 Playwright 内部未处理异常（Frame detached 等），防止进程崩溃
 process.on('uncaughtException', (err) => {
@@ -106,8 +117,10 @@ export async function ensurePage(): Promise<Page> {
     browser = await chromium.connectOverCDP(wsUrl, { timeout: 10_000 });
 
     browser.on('disconnected', () => {
-      log.warn('browser disconnected event');
+      const wasIntentional = closingExplicitly;
+      log.warn(`browser disconnected event (intentional=${wasIntentional})`);
       resetState();
+      if (!wasIntentional) browserEvents.emit('user-closed');
     });
 
     // 优先复用已有 context（避免覆盖 cookies / 用户首选项）
@@ -157,7 +170,12 @@ export function getActivePage(): Page | null {
 export async function closeSession(): Promise<void> {
   if (idleTimer) { clearTimeout(idleTimer); idleTimer = null; }
   if (browser) {
-    await browser.close().catch(() => { /* ignore */ });
+    closingExplicitly = true;
+    try {
+      await browser.close().catch(() => { /* ignore */ });
+    } finally {
+      closingExplicitly = false;
+    }
     browser = null;
     context = null;
     pages = [];

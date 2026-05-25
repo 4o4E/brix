@@ -9,7 +9,7 @@
 
 import { getEnv } from '../src/config.js';
 import { createServer } from '../src/server/http.js';
-import { closeSession } from '../src/browser/session.js';
+import { browserEvents, closeSession } from '../src/browser/session.js';
 import { createLogger } from '../src/utils/logger.js';
 import { syncBuiltins } from '../src/scripts/bootstrap.js';
 
@@ -42,6 +42,13 @@ async function main() {
   };
   process.on('SIGINT', () => void shutdown('SIGINT'));
   process.on('SIGTERM', () => void shutdown('SIGTERM'));
+
+  // 用户/外部关掉了 Chrome（关窗口、taskkill 等）→ brix 也跟着退
+  // 与 idle 超时 (closeSession) 不同：idle 超时是我们主动 disconnect，不会触发这条路径
+  browserEvents.on('user-closed', () => {
+    log.warn('chrome closed by user/external, shutting down brix');
+    void shutdown('browser-closed');
+  });
 }
 
 main().catch((err) => {
