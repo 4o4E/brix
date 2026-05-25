@@ -264,9 +264,19 @@ async function launchChromeProcess(port: number): Promise<ChromeHandle> {
     // 配合 patchright 的 Runtime.enable 规避，Google "不安全浏览器" 概率显著降低。
     '--disable-blink-features=AutomationControlled',
   ];
-  // START_MINIMIZED=true 时跳过 --start-maximized，等 CDP 起来后用
-  // Browser.setWindowBounds 设 minimized；否则窗口会先最大化闪一下再缩。
-  if (!env.START_MINIMIZED) args.push('--start-maximized');
+  // 窗口尺寸三态：
+  //   - WINDOW_WIDTH 且 WINDOW_HEIGHT 都 > 0：用 --window-size=W,H 显式指定
+  //     用于让响应式布局在不同环境表现一致。指定尺寸时跳过 --start-maximized
+  //     （二者互斥，否则 maximize 会盖掉指定值）。
+  //   - 否则未最小化：--start-maximized（旧行为）
+  //   - 否则最小化：什么都不加，等 CDP 起来后用 Browser.setWindowBounds 设 minimized
+  // 注：--window-size 控制的是窗口外框；viewport ≈ 窗口宽 - 滚动条，高 - 标题栏 -
+  // 工具栏 - 标签栏。需要像素级精确 viewport 的话再叠加 page.setViewportSize()。
+  if (env.WINDOW_WIDTH > 0 && env.WINDOW_HEIGHT > 0) {
+    args.push(`--window-size=${env.WINDOW_WIDTH},${env.WINDOW_HEIGHT}`);
+  } else if (!env.START_MINIMIZED) {
+    args.push('--start-maximized');
+  }
   // BRIX_CHROME_EXTRA_ARGS: 空白分隔，追加到 chrome args 后。CI 上需要
   // --no-sandbox --disable-dev-shm-usage 才能起得来；本机 Windows 一般不用动。
   // 跟 anti-detection 的取舍：本机不传 = 行为不变；CI 显式传 = 接受指纹偏差。

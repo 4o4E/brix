@@ -45,6 +45,10 @@ export interface EnvConfig {
   HTTP_PORT: number;
   /** Chrome 启动后是否最小化窗口（通过 CDP Browser.setWindowBounds），默认 true */
   START_MINIMIZED: boolean;
+  /** Chrome 窗口宽度（--window-size）；0 = 不指定，由 START_MINIMIZED 决定 */
+  WINDOW_WIDTH: number;
+  /** Chrome 窗口高度（--window-size）；0 = 不指定 */
+  WINDOW_HEIGHT: number;
 }
 
 const CHROME_CANDIDATES = [
@@ -128,6 +132,8 @@ export function getEnv(): EnvConfig {
     HTTP_HOST: process.env.BRIX_HTTP_HOST?.trim() || '0.0.0.0',
     HTTP_PORT: intEnv('BRIX_HTTP_PORT', 9233),
     START_MINIMIZED: boolEnv('BRIX_CHROME_START_MINIMIZED', true),
+    WINDOW_WIDTH: intEnv('BRIX_WINDOW_WIDTH', 0),
+    WINDOW_HEIGHT: intEnv('BRIX_WINDOW_HEIGHT', 0),
   };
   return cached;
 }
