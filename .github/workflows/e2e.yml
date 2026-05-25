@@ -35,7 +35,7 @@ jobs:
   e2e:
     name: Real-Chrome E2E
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 8
     needs: unit
 
     steps:

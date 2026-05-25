@@ -11,9 +11,9 @@
 //     per spawn — even if the Chrome instance lingers a few seconds, it
 //     cannot collide with the next spawn.
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
-import { createWriteStream } from 'node:fs';
+import { createWriteStream, writeFileSync } from 'node:fs';
 import { mkdtemp, rm, mkdir } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { dirname, join, resolve } from 'node:path';
@@ -78,6 +78,14 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
   await mkdir(dataDir, { recursive: true });
   await mkdir(userDataDir, { recursive: true });
   const logPath = join(scratch, 'brix-stdio.log');
+  // Touch the file synchronously up front. createWriteStream(flags:'a') is
+  // lazy — it only opens the fd on first write, so a child process that
+  // hangs before printing anything leaves nothing on disk and the CI
+  // upload-artifact step finds nothing. A 1-line marker guarantees the
+  // file exists, and lets us identify *which* spawn it was when several
+  // tests' logs end up in the same artifact archive.
+  const startMarker = `=== brix-e2e spawn at ${new Date().toISOString()} httpPort=${httpPort} cdpPort=${cdpPort} ===\n`;
+  writeFileSync(logPath, startMarker);
 
   const env: NodeJS.ProcessEnv = {
     ...process.env,
@@ -151,11 +159,35 @@ export async function startBrixServer(opts: SpawnOpts = {}): Promise<BrixServer>
       const t = setTimeout(() => resolveP(), 2000);
       child.once('exit', () => { clearTimeout(t); resolveP(); });
     });
+    // Chrome was spawned `detached: true` by src/browser/launcher.ts and is
+    // NOT a child of the brix server, so killing the server doesn't reach
+    // it. On Linux CI we leave a zombie Chrome holding its CDP port + xvfb
+    // resources between tests, which seems to wedge the next test's first
+    // session creation. Cheap targeted cleanup: pgrep -f for any process
+    // whose cmdline contains our unique user-data-dir, SIGKILL them.
+    killChromeByUserDataDir(userDataDir);
     await new Promise<void>((resolveP) => logStream.end(resolveP));
     await rm(scratch, { recursive: true, force: true }).catch(() => { /* ignore */ });
   };
 
   return { baseUrl, token, httpPort, cdpPort, dataDir, userDataDir, logPath, stop };
+}
+
+/**
+ * pgrep -f to find any process whose cmdline contains userDataDir, then
+ * SIGKILL them. Linux/macOS only — on Windows we don't run CI. Best-effort:
+ * pgrep not installed → just return.
+ */
+function killChromeByUserDataDir(userDataDir: string): void {
+  if (process.platform === 'win32') return;
+  try {
+    const r = spawnSync('pgrep', ['-f', userDataDir], { encoding: 'utf-8' });
+    if (r.status !== 0 || !r.stdout) return;
+    const pids = r.stdout.split(/\s+/).filter(Boolean).map((s) => Number(s)).filter((n) => Number.isFinite(n));
+    for (const pid of pids) {
+      try { process.kill(pid, 'SIGKILL'); } catch { /* already gone */ }
+    }
+  } catch { /* pgrep not present */ }
 }
 
 function waitForLine(stdout: Readable, stderr: Readable, re: RegExp, timeoutMs: number): Promise<void> {
