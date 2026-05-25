@@ -10,6 +10,7 @@
     "gemini-draw": "tsx scripts/gemini-draw.ts",
     "serve": "tsx scripts/serve.ts",
     "test": "tsx --test src/**/*.test.ts",
+    "e2e": "tsx --test test/e2e/**/*.test.ts",
     "typecheck": "tsc --noEmit"
   },
   "dependencies": {

@@ -1,0 +1,60 @@
+name: e2e
+
+on:
+  push:
+    branches: [main, master]
+  pull_request:
+    branches: [main, master]
+  workflow_dispatch:
+
+jobs:
+  e2e:
+    name: Real-Chrome E2E
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+
+      - name: Setup Node.js 22
+        uses: actions/setup-node@v4
+        with:
+          node-version: '22'
+          cache: 'npm'
+
+      - name: Install dependencies
+        run: npm ci
+
+      - name: Install Google Chrome
+        id: chrome
+        uses: browser-actions/setup-chrome@v1
+        with:
+          chrome-version: stable
+
+      - name: Install xvfb
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y xvfb
+
+      - name: Typecheck
+        run: npm run typecheck
+
+      - name: Run E2E tests (xvfb + real Chrome)
+        env:
+          BRIX_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+        run: |
+          echo "Using Chrome at: $BRIX_CHROME_PATH"
+          "$BRIX_CHROME_PATH" --version || true
+          xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run e2e
+
+      - name: Upload brix stdio logs on failure
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: brix-e2e-logs
+          path: |
+            /tmp/brix-e2e-*/brix-stdio.log
+            /tmp/brix-e2e-*/data/logs/*.log
+          if-no-files-found: ignore
+          retention-days: 7
