@@ -190,6 +190,40 @@ async function downloadImages(page: Page, run: Run): Promise<ImageItem[]> {
   return items;
 }
 
+/**
+ * 切到 "制作图片" 模式：点输入框旁的 "+"（aria-label="上传和工具"），
+ * 在弹出菜单里点 "制作图片"。
+ *
+ * 不强制：找不到 "+" 或菜单项就 warn 后跳过，Gemini 仍可能按 prompt 文意
+ * 自行生成图。失败兜底按 Esc 把可能打开的菜单关掉。
+ */
+async function selectImageMode(page: Page, run: Run): Promise<void> {
+  run.log.info('selecting image mode: click "+" → "制作图片"');
+  const plus = page.locator('button[aria-label="上传和工具"]').first();
+  try {
+    await plus.waitFor({ state: 'visible', timeout: 10_000 });
+  } catch (e) {
+    run.log.warn(`"+" (上传和工具) not found, skip mode selection: ${e instanceof Error ? e.message : e}`);
+    return;
+  }
+  await plus.click();
+  // Material 菜单可能是 [role="menuitem"] 或 button 或 [mat-menu-item]；
+  // 都用 has-text("制作图片") 兜底，谁先 visible 算谁。
+  const item = page.locator(
+    '[role="menuitem"]:has-text("制作图片"), button:has-text("制作图片"), [mat-menu-item]:has-text("制作图片")',
+  ).first();
+  try {
+    await item.waitFor({ state: 'visible', timeout: 5_000 });
+    await item.click();
+    run.log.info('"制作图片" clicked');
+  } catch (e) {
+    run.log.warn(`"制作图片" menu item not found: ${e instanceof Error ? e.message : e}`);
+    await page.keyboard.press('Escape').catch(() => { /* ignore */ });
+  }
+  await page.waitForTimeout(500);
+  await snap(page, run, '01b-image-mode');
+}
+
 async function extractLastResponseText(page: Page): Promise<string> {
   return (await page.evaluate(() => {
     const all = Array.from(document.querySelectorAll('model-response'));
@@ -212,15 +246,21 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
   }
   await snap(page, run, '01-loaded');
 
-  const input = await page.waitForSelector(
-    'div.ql-editor[contenteditable="true"][role="textbox"]',
-    { state: 'visible', timeout: 30_000 },
-  );
+  // 输入框选择器在切模式后会重新渲染 —— 用 Locator 而不是 ElementHandle，
+  // 每次 action 自动重新解析当前 DOM
+  const inputSel = 'div.ql-editor[contenteditable="true"][role="textbox"]';
+  await page.waitForSelector(inputSel, { state: 'visible', timeout: 30_000 });
+
+  // 显式切到图片模式 —— 不依赖 Gemini 自动从 prompt 文意推断
+  await selectImageMode(page, run);
 
   await page.evaluate('window.__name = window.__name || function(fn){return fn;};');
   const baseline = await getState(page);
   run.log.info(`baseline modelResponseCount=${baseline.modelResponseCount}`);
 
+  // 切模式后等 input 重渲染稳定（取消按 Esc 兜底也可能引发 reflow）
+  await page.waitForSelector(inputSel, { state: 'visible', timeout: 5_000 });
+  const input = page.locator(inputSel).first();
   await input.click();
   await page.keyboard.press('Control+A').catch(() => { /* ignore */ });
   await page.keyboard.press('Delete').catch(() => { /* ignore */ });
