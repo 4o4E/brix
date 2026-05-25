@@ -65,13 +65,16 @@ jobs:
       - name: Run E2E tests (xvfb + real Chrome)
         env:
           BRIX_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          # GH runner 没 user namespace 沙箱 + /dev/shm 只 64MB，
+          # 不加这两个 chrome 直接起不来。本机不要传，避免动指纹。
+          BRIX_CHROME_EXTRA_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu"
         run: |
           echo "Using Chrome at: $BRIX_CHROME_PATH"
           "$BRIX_CHROME_PATH" --version || true
           xvfb-run -a --server-args="-screen 0 1920x1080x24" npm run e2e
 
-      - name: Upload brix stdio logs on failure
-        if: failure()
+      - name: Upload brix stdio logs
+        if: always()
         uses: actions/upload-artifact@v4
         with:
           name: brix-e2e-logs

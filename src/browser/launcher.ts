@@ -91,6 +91,11 @@ async function launchChromeProcess(): Promise<void> {
     '--no-default-browser-check',
     '--start-maximized',
   ];
+  // BRIX_CHROME_EXTRA_ARGS: 空白分隔，追加到 chrome args 后。CI 上需要
+  // --no-sandbox --disable-dev-shm-usage 才能起得来；本机 Windows 一般不用动。
+  // 跟 anti-detection 的取舍：本机不传 = 行为不变；CI 显式传 = 接受指纹偏差。
+  const extra = process.env.BRIX_CHROME_EXTRA_ARGS?.trim();
+  if (extra) args.push(...extra.split(/\s+/).filter(Boolean));
   log.info(`spawn chrome ${env.CHROME_PATH}`);
   log.debug(`chrome args: ${args.join(' ')}`);
 
