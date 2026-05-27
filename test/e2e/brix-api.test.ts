@@ -72,11 +72,12 @@ describe('brix .js / brix-api e2e', () => {
       headers: authed(),
       body: JSON.stringify({ source: BRIX_API_SCRIPT }),
     });
-    assert.equal(
-      putRes.status, 200,
-      `PUT /scripts/brix-api-test: ${putRes.status} ${await putRes.text().catch(() => '')}`,
-    );
-    const putJson = (await putRes.json()) as { meta: { language: string } };
+    // Read body once into text; template literal in assert message evals eagerly,
+    // so calling putRes.text() there followed by putRes.json() throws "Body has
+    // already been read." Parse the text manually instead.
+    const putText = await putRes.text();
+    assert.equal(putRes.status, 200, `PUT /scripts/brix-api-test: ${putRes.status} ${putText.slice(0, 400)}`);
+    const putJson = JSON.parse(putText) as { meta: { language: string } };
     assert.equal(putJson.meta.language, 'js', 'default language should be js');
 
     // 2. GET to confirm meta + source survive a round-trip
