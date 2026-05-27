@@ -33,7 +33,8 @@ export async function syncBuiltins(): Promise<SyncResult> {
   const copied: string[] = [];
   const skipped: string[] = [];
   for (const f of entries) {
-    if (!f.endsWith('.ts')) continue;
+    // 同时拷 .js（新约定）和 .ts（旧约定，迁移期保留）
+    if (!f.endsWith('.ts') && !f.endsWith('.js')) continue;
     const dst = join(env.SCRIPTS_DIR, f);
     try {
       await stat(dst);

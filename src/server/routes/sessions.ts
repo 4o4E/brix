@@ -10,6 +10,7 @@ import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Page } from 'patchright';
 import { createBrixSession, closeBrixSession, getBrixSession, listBrixSessions, touchBrixSession } from '../../sessions/registry.js';
 import { BadScriptError, NotFoundError, loadScriptModule } from '../../scripts/registry.js';
+import { createBrixScriptApi } from '../../scripts/api.js';
 import { createRun } from '../../runs/run.js';
 import { createLogger } from '../../utils/logger.js';
 import { readJson, sendError, sendJson, sendNoContent } from '../util.js';
@@ -65,9 +66,9 @@ export async function handleSessions(req: IncomingMessage, res: ServerResponse, 
     }
     const args = body?.args;
 
-    let mod: { runInSession: (page: unknown, args: unknown, run: unknown) => Promise<unknown> };
+    let loaded;
     try {
-      mod = await loadScriptModule(name);
+      loaded = await loadScriptModule(name);
     } catch (e) {
       if (e instanceof NotFoundError) { sendError(res, 404, 'not_found', 'script'); return true; }
       if (e instanceof BadScriptError) { sendError(res, 500, 'bad_script', e.message); return true; }
@@ -78,10 +79,18 @@ export async function handleSessions(req: IncomingMessage, res: ServerResponse, 
 
     const run = await createRun();
     touchBrixSession(sid);
-    log.info(`session ${sid} → script ${name} → run ${run.runId}`);
+    log.info(`session ${sid} → script ${name} (${loaded.convention}) → run ${run.runId}`);
 
     try {
-      const output = await mod.runInSession(session.page as Page, args, run);
+      let output: unknown;
+      if (loaded.convention === 'brix-api') {
+        // 新约定：注入 BrixScriptApi，脚本拿不到 page/run 句柄
+        const brix = createBrixScriptApi(session.page as Page, run, args);
+        output = await loaded.runInSession(brix);
+      } else {
+        // 旧约定：runInSession(page, args, run)（迁移期保留给 .ts 内置脚本）
+        output = await loaded.runInSession(session.page as Page, args, run);
+      }
       const downloads = await run.listDownloads();
       touchBrixSession(sid);
       sendJson(res, 200, { runId: run.runId, output, downloads });

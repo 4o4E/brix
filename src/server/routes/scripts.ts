@@ -62,8 +62,15 @@ export async function handleScripts(req: IncomingMessage, res: ServerResponse, p
       return true;
     }
     const source = (body as { source: string }).source;
+    const langRaw = (body as { language?: unknown }).language;
+    let language: 'js' | 'ts' | undefined;
+    if (langRaw === 'js' || langRaw === 'ts') language = langRaw;
+    else if (langRaw !== undefined) {
+      sendError(res, 400, 'bad_request', 'language must be "js" or "ts"');
+      return true;
+    }
     try {
-      const meta = await writeScript(name, source);
+      const meta = await writeScript(name, source, { language });
       sendJson(res, 200, { meta });
     } catch (e) {
       if (e instanceof BadScriptError) sendError(res, 400, 'bad_script', e.details);
