@@ -89,6 +89,14 @@ jobs:
         timeout-minutes: 4
         run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npx tsx --test --test-force-exit test/e2e/http.test.ts
 
+      - name: E2E - brix-api.test.ts
+        if: always()
+        env:
+          BRIX_CHROME_PATH: ${{ steps.chrome.outputs.chrome-path }}
+          BRIX_CHROME_EXTRA_ARGS: "--no-sandbox --disable-dev-shm-usage --disable-gpu"
+        timeout-minutes: 4
+        run: xvfb-run -a --server-args="-screen 0 1920x1080x24" npx tsx --test --test-force-exit test/e2e/brix-api.test.ts
+
       - name: Upload brix stdio logs
         if: always()
         uses: actions/upload-artifact@v4

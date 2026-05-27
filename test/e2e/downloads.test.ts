@@ -30,6 +30,11 @@ function authed(extra: Record<string, string> = {}): Record<string, string> {
 
 // Source for an ad-hoc script we PUT to /scripts/dl-test. Triggers a download
 // by clicking the #dl link on the fixture page and saves it via run.saveDownload.
+//
+// This is intentionally a .ts (legacy) script: it imports Playwright types and
+// receives raw page/run. PR 1 made .js (BrixScriptApi) the default, so we must
+// PUT with language='ts' to route through the legacy path. brix-api.test.ts
+// covers the .js path with brix.captureDownload + brix.saveDownload.
 const DL_SCRIPT_SOURCE = `
 import type { Page } from 'patchright';
 import type { Run } from '../src/runs/run.js';
@@ -51,11 +56,11 @@ export async function runInSession(page: Page, _args: unknown, run: Run): Promis
 
 describe('brix downloads e2e', () => {
   test('PUT ad-hoc script → run → GET file bytes → DELETE file', { timeout: 240_000 }, async () => {
-    // 1. PUT /scripts/dl-test
+    // 1. PUT /scripts/dl-test  (language=ts → legacy path; see DL_SCRIPT_SOURCE comment)
     const putRes = await fetch(`${brix.baseUrl}/scripts/dl-test`, {
       method: 'PUT',
       headers: authed(),
-      body: JSON.stringify({ source: DL_SCRIPT_SOURCE }),
+      body: JSON.stringify({ source: DL_SCRIPT_SOURCE, language: 'ts' }),
     });
     assert.equal(
       putRes.status, 200,
