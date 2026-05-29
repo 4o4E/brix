@@ -335,19 +335,17 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
   const t0 = Date.now();
   run.log.info(`prompt="${prompt}" inputImages=${inputImages.length}`);
 
+  // Gemini 页面会长期保持后台请求，不等 networkidle，直接以输入框可用作为启动完成信号。
+  const inputSel = 'div.ql-editor[contenteditable="true"][role="textbox"]';
   if (!/^https?:\/\/gemini\.google\.com\//.test(page.url())) {
     run.log.info('not on gemini, goto gemini.google.com/app');
     await page.goto('https://gemini.google.com/app', { waitUntil: 'domcontentloaded', timeout: 30_000 });
-    await page.waitForLoadState('networkidle', { timeout: 20_000 }).catch(() => { /* ignore */ });
-    await page.waitForTimeout(1_500);
   }
+  await page.waitForSelector(inputSel, { state: 'visible', timeout: 30_000 });
   await snap(page, run, '01-loaded');
 
   // 输入框选择器在切模式后会重新渲染 —— 用 Locator 而不是 ElementHandle，
   // 每次 action 自动重新解析当前 DOM
-  const inputSel = 'div.ql-editor[contenteditable="true"][role="textbox"]';
-  await page.waitForSelector(inputSel, { state: 'visible', timeout: 30_000 });
-
   if (inputImages.length > 0) {
     const input = page.locator(inputSel).first();
     await input.click();
