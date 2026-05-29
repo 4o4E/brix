@@ -371,7 +371,8 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
     await page.keyboard.press('Control+A').catch(() => { /* ignore */ });
     await page.keyboard.press('Delete').catch(() => { /* ignore */ });
   }
-  await page.keyboard.type(prompt, { delay: 8 });
+  // 不能用 keyboard.type：多行 prompt 里的换行会按 Enter 发给 Gemini，导致只发送第一段。
+  await page.keyboard.insertText(prompt);
   await page.waitForTimeout(300);
 
   const sendBtn = await page.waitForSelector('button[aria-label="发送"]', { state: 'visible', timeout: 5_000 });
