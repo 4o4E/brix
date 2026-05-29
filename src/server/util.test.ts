@@ -1,8 +1,15 @@
+// 把 body 限设成 1MB 再 import util.js —— config.ts 的 getEnv() 是 cached singleton，
+// 必须在 readJson 第一次触达 getEnv 之前 set 好。node:test 每文件独立 process，
+// 不会污染其他测试。
+process.env.BRIX_HTTP_MAX_BODY_MB = '1';
+
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
 import { Readable } from 'node:stream';
 import type { IncomingMessage } from 'node:http';
 import { readJson } from './util.js';
+
+const MB = 1024 * 1024;
 
 function makeReq(body: Buffer | string): IncomingMessage {
   // readJson 只用了 async iterator 接口；Readable 满足
@@ -39,16 +46,16 @@ test('readJson: handles multi-chunk body', async () => {
   assert.deepEqual(r, { msg: 'hello' });
 });
 
-test('readJson: body over 4 MB throws', async () => {
-  const big = Buffer.alloc(4 * 1024 * 1024 + 1, 0x61); // 4MB+1 of 'a'
+test('readJson: body over configured limit throws (BRIX_HTTP_MAX_BODY_MB=1 → 1MB)', async () => {
+  const big = Buffer.alloc(MB + 1, 0x61); // 1MB+1 of 'a'
   await assert.rejects(() => readJson(makeReq(big)), /body too large/);
 });
 
-test('readJson: body exactly at 4 MB limit accepted (if valid json)', async () => {
-  // Build a string ~4MB of valid JSON: {"x":"<lots of a>"}
-  const filler = 'a'.repeat(4 * 1024 * 1024 - 16);
+test('readJson: body exactly at configured limit accepted (if valid json)', async () => {
+  // Build a string ~1MB of valid JSON: {"x":"<lots of a>"}
+  const filler = 'a'.repeat(MB - 16);
   const payload = `{"x":"${filler}"}`;
-  assert.ok(Buffer.byteLength(payload) <= 4 * 1024 * 1024);
+  assert.ok(Buffer.byteLength(payload) <= MB);
   const r = await readJson<{ x: string }>(makeReq(payload));
   assert.equal(r!.x.length, filler.length);
 });

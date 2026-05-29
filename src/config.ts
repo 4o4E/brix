@@ -43,6 +43,8 @@ export interface EnvConfig {
   HTTP_HOST: string;
   /** HTTP 监听端口，默认 9233 */
   HTTP_PORT: number;
+  /** HTTP 请求体字节上限；脚本里传的 base64 图片是大头，默认 64MB（env BRIX_HTTP_MAX_BODY_MB） */
+  HTTP_MAX_BODY_BYTES: number;
   /** Chrome 启动后是否最小化窗口（通过 CDP Browser.setWindowBounds），默认 true */
   START_MINIMIZED: boolean;
   /** Chrome 窗口宽度（--window-size）；0 = 不指定，由 START_MINIMIZED 决定 */
@@ -131,6 +133,7 @@ export function getEnv(): EnvConfig {
     HTTP_TOKEN: process.env.BRIX_TOKEN?.trim() || null,
     HTTP_HOST: process.env.BRIX_HTTP_HOST?.trim() || '0.0.0.0',
     HTTP_PORT: intEnv('BRIX_HTTP_PORT', 9233),
+    HTTP_MAX_BODY_BYTES: intEnv('BRIX_HTTP_MAX_BODY_MB', 64) * 1024 * 1024,
     START_MINIMIZED: boolEnv('BRIX_CHROME_START_MINIMIZED', true),
     WINDOW_WIDTH: intEnv('BRIX_WINDOW_WIDTH', 0),
     WINDOW_HEIGHT: intEnv('BRIX_WINDOW_HEIGHT', 0),
