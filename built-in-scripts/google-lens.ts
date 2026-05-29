@@ -32,6 +32,8 @@ interface LensItem {
   url: string;
   sourceDomain: string;
   thumbnailUrl: string;
+  faviconUrl?: string;
+  imageUrl?: string;
   thumbnailWidth?: number;
   thumbnailHeight?: number;
 }
@@ -154,15 +156,27 @@ async function uploadAndExtract(page: Page, imagePath: string, run: Run) {
       url: string;
       sourceDomain: string;
       thumbnailUrl: string;
+      faviconUrl?: string;
+      imageUrl?: string;
       thumbnailWidth?: number;
       thumbnailHeight?: number;
     };
 
     const anchors = Array.from(document.querySelectorAll('a[href]')) as HTMLAnchorElement[];
     const items: Item[] = [];
+    const isFavicon = (img: HTMLImageElement) => {
+      const src = img.currentSrc || img.src || '';
+      const naturalWidth = img.naturalWidth || img.width || 0;
+      const naturalHeight = img.naturalHeight || img.height || 0;
+      const displayWidth = img.clientWidth || img.width || 0;
+      const displayHeight = img.clientHeight || img.height || 0;
+      return src.includes('/favicon-tbn')
+        || (naturalWidth <= 40 && naturalHeight <= 40)
+        || (displayWidth <= 40 && displayHeight <= 40);
+    };
+    const isVisiblePreview = (img: HTMLImageElement) => (img.clientWidth || img.width || 0) >= 60 && (img.clientHeight || img.height || 0) >= 60;
+    const imageArea = (img: HTMLImageElement) => (img.clientWidth || img.width || 0) * (img.clientHeight || img.height || 0);
     for (const a of anchors) {
-      const img = a.querySelector('img') as HTMLImageElement | null;
-      if (!img) continue;
       const href = a.href;
       if (!href || href.startsWith('javascript:') || href.startsWith('#')) continue;
       const domain = safeDomain(href);
@@ -171,14 +185,33 @@ async function uploadAndExtract(page: Page, imagePath: string, run: Run) {
       if (/(^|\.)gstatic\.com$/.test(domain)) continue;
       if (/(^|\.)googleusercontent\.com$/.test(domain)) continue;
 
-      const title = (a.getAttribute('aria-label') || a.textContent || img.alt || '').trim();
+      const card = a.closest('.vEWxFf') || a.closest('[data-snm]') || a.parentElement;
+      const cardImages = Array.from(card?.querySelectorAll('img') ?? []) as HTMLImageElement[];
+      const linkImages = Array.from(a.querySelectorAll('img')) as HTMLImageElement[];
+      const preview = cardImages
+        .filter((img) => !isFavicon(img) && isVisiblePreview(img))
+        .sort((a, b) => imageArea(b) - imageArea(a))[0] ?? null;
+      const favicon = linkImages.find(isFavicon) ?? cardImages.find(isFavicon) ?? null;
+      if (!preview) continue;
+
+      const title = (
+        a.querySelector('[role="heading"], h3, .Yt787')?.textContent ||
+        card?.querySelector('[aria-label]')?.getAttribute('aria-label') ||
+        a.getAttribute('aria-label') ||
+        preview.alt ||
+        a.textContent ||
+        ''
+      ).trim();
+      const imageUrl = safeUrl(preview.currentSrc || preview.src);
       items.push({
         title,
         url: safeUrl(href),
         sourceDomain: domain,
-        thumbnailUrl: img.src,
-        thumbnailWidth: img.naturalWidth || undefined,
-        thumbnailHeight: img.naturalHeight || undefined,
+        thumbnailUrl: imageUrl,
+        faviconUrl: favicon ? safeUrl(favicon.currentSrc || favicon.src) : undefined,
+        imageUrl,
+        thumbnailWidth: preview.naturalWidth || preview.width || undefined,
+        thumbnailHeight: preview.naturalHeight || preview.height || undefined,
       });
     }
 
