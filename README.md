@@ -152,7 +152,7 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/sessions/$SID -i
 | 脚本 | args | 输出要点 |
 |---|---|---|
 | [gemini-draw](scripts/gemini-draw.ts) | `{prompt: string}` | 图片落 `downloads/image-N.<ext>`；文字回复在 `output.text` |
-| [google-lens](scripts/google-lens.ts) | `{image: string}`（base64/dataURL）或 `{imagePath: string}` | `output.pages: [{title, url, sourceDomain, thumbnailUrl, ...}]` |
+| [google-lens](scripts/google-lens.ts) | `{image: string}`（base64/dataURL）或 `{imagePath: string}` | `output.pages: [{title, url, sourceDomain, thumbnailUrl, ...}]`；`output.aiOverview: {text, sources: [{title, url, sourceDomain}], generated}`（AI 概览正文与引用来源） |
 | [snapshot](scripts/snapshot.ts) | `{url?, scope?, interactiveOnly?, maxDepth?}` | `output.snapshot: string`（带 `[ref=eN]`）+ refMap 落 `refs.json` |
 | [login](scripts/login.ts) | — | 打开 accounts.google.com 等用户登录，最多 10 分钟。cookie 留在 profile |
 

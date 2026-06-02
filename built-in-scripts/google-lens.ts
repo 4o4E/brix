@@ -38,9 +38,27 @@ interface LensItem {
   thumbnailHeight?: number;
 }
 
+/** Google AI 概览（AI Overview）引用的来源 */
+interface AiSource {
+  title: string;
+  url: string;
+  sourceDomain: string;
+  faviconUrl?: string;
+}
+
+interface AiOverview {
+  /** AI 概览正文（已折叠空白）；未生成时为空串 */
+  text: string;
+  /** AI 分析引用的来源链接（去重，已剔除 google 自身域名） */
+  sources: AiSource[];
+  /** true=成功生成；false=Google 未能生成 / 超时未出现 */
+  generated: boolean;
+}
+
 export interface LensOutput {
   pages: LensItem[];
   visualMatches: LensItem[];
+  aiOverview: AiOverview;
   finalUrl: string;
   durationMs: number;
 }
@@ -103,6 +121,54 @@ async function snap(page: Page, run: Run, tag: string) {
   run.log.info(`stage=${tag} url=${page.url()}`);
 }
 
+// AI 概览是异步生成的：结果页先出占位符（“无法针对此搜索生成 AI 概览”默认 display:none），
+// 几秒~几十秒后才填入正文与来源链接。这里把它滚进视口触发生成，再轮询直到正文/来源出现
+// 或 Google 明确显示生成失败；最多等 timeoutMs，等不到就放行（best-effort，不阻断主链路）。
+async function waitForAiOverview(page: Page, run: Run, timeoutMs = 45_000) {
+  try {
+    await page.evaluate(() => {
+      const headings = Array.from(document.querySelectorAll('[role="heading"]'));
+      const h = headings.find((e) => /AI\s*概览|AI\s*Overview/i.test(e.textContent || ''));
+      h?.scrollIntoView({ block: 'center' });
+    });
+  } catch { /* ignore */ }
+
+  try {
+    await page.waitForFunction(
+      () => {
+        const headings = Array.from(document.querySelectorAll('[role="heading"]'));
+        const h = headings.find((e) => /AI\s*概览|AI\s*Overview/i.test(e.textContent || ''));
+        if (!h) return false; // 模块尚未出现
+        let root: Element = h;
+        for (let i = 0; i < 8 && root.parentElement; i++) {
+          root = root.parentElement;
+          if (root.querySelector('a[href]') && (root.textContent || '').length > 200) break;
+        }
+        // Google 明确表示无法生成（占位符变为可见）→ 视为已结束
+        const failVisible = Array.from(root.querySelectorAll('span')).some((s) => {
+          const t = s.textContent || '';
+          const visible = !!(s as HTMLElement).offsetParent;
+          return visible && /无法.*AI 概[览要]|请稍后重试|can.?t generate|couldn.?t generate|No AI Overview/i.test(t);
+        });
+        if (failVisible) return true;
+        const links = Array.from(root.querySelectorAll('a[href]')).filter((a) => {
+          try {
+            const u = new URL((a as HTMLAnchorElement).href);
+            return u.protocol.startsWith('http') && !/(^|\.)google\.com$/.test(u.hostname);
+          } catch { return false; }
+        });
+        const text = (root.textContent || '').replace(/\s+/g, ' ').trim();
+        return links.length >= 1 || text.length > 160;
+      },
+      { timeout: timeoutMs, polling: 800 },
+    );
+    run.log.info('AI 概览已就绪（或确认无法生成）');
+  } catch {
+    run.log.warn(`AI 概览等待超时（${timeoutMs}ms），按未生成处理`);
+  }
+  await snap(page, run, '05-ai-overview');
+}
+
 async function uploadAndExtract(page: Page, imagePath: string, run: Run) {
   run.log.info('goto lens.google.com');
   await page.goto('https://lens.google.com/?hl=en', { waitUntil: 'domcontentloaded', timeout: 30_000 });
@@ -139,6 +205,8 @@ async function uploadAndExtract(page: Page, imagePath: string, run: Run) {
   await page.waitForLoadState('networkidle', { timeout: 30_000 }).catch(() => { /* ignore */ });
   await page.waitForTimeout(2_000);
   await snap(page, run, '04-results');
+
+  await waitForAiOverview(page, run);
 
   await page.evaluate('window.__name = window.__name || function(fn){return fn;};');
 
@@ -222,7 +290,88 @@ async function uploadAndExtract(page: Page, imagePath: string, run: Run) {
       seen.add(it.url);
       dedup.push(it);
     }
-    return { pages: dedup, visualMatches: dedup };
+
+    // ---- AI 概览（AI Overview）正文 + 来源 ----
+    type Source = { title: string; url: string; sourceDomain: string; faviconUrl?: string };
+    const extractAiOverview = (): { text: string; sources: Source[]; generated: boolean } => {
+      const headings = Array.from(document.querySelectorAll('[role="heading"]'));
+      const heading = headings.find((e) => /AI\s*概览|AI\s*Overview/i.test(e.textContent || ''));
+      if (!heading) return { text: '', sources: [], generated: false };
+
+      // 从标题向上找模块根：第一个同时包含外链且文本量较大的祖先
+      let root: Element = heading;
+      for (let i = 0; i < 8 && root.parentElement; i++) {
+        root = root.parentElement;
+        if (root.querySelector('a[href]') && (root.textContent || '').length > 200) break;
+      }
+
+      const failVisible = Array.from(root.querySelectorAll('span')).some((s) => {
+        const visible = !!(s as HTMLElement).offsetParent;
+        return visible && /无法.*AI 概[览要]|请稍后重试|can.?t generate|couldn.?t generate|No AI Overview/i.test(s.textContent || '');
+      });
+
+      // innerText 只取“渲染出来的”文本：自动跳过 display:none 的占位失败提示，
+      // 也排除 <script>/<style>，比 textContent 干净得多。再剥掉标题标签本身。
+      let text = ((root as HTMLElement).innerText || root.textContent || '')
+        .replace(/AI\s*概览/g, '')
+        .replace(/AI\s*Overview/gi, '')
+        .replace(/\s+/g, ' ')
+        .trim();
+
+      // 正文之后会跟来源卡片列表，二者以 “[<站点名>] [+]N 个网站” 分隔：前缀 “+” 时有时无
+      //（“+45 个网站” / “1 个网站”），innerText 还可能把数字拆开（“+4 5 个网站”），故 “+” 可选、
+      // 数字用 [\d\s]* 容错。识别该标记，截掉其后的来源段，并去掉紧贴其前、由空白引出的来源
+      // 站点名（如 “Facebook”），避免留下孤词。
+      const tailMatch = text.match(/(?:\+\s*)?\d[\d\s]*\s*(?:个网站|个网页|sites?|websites?)/i);
+      if (tailMatch && tailMatch.index !== undefined) {
+        const cut = text.slice(0, tailMatch.index).replace(/\s+[^\s。.!?！？]{1,40}\s*$/, '').trim();
+        if (cut.length >= 20) text = cut; // 防误切：截出来太短就保留原文
+      }
+      // 兜底剥掉末尾的 AI 免责声明（无来源分隔标记、未触发上面截断时可能残留）
+      text = text
+        .replace(/\s*AI 的回答未必正确无误[，,。.\s]*请注意核查。?\s*$/, '')
+        .replace(/\s*AI responses may (?:include|contain) mistakes\.?\s*$/i, '')
+        .trim();
+
+      const srcSeen = new Set<string>();
+      const sources: Source[] = [];
+      for (const a of Array.from(root.querySelectorAll('a[href]')) as HTMLAnchorElement[]) {
+        const url = safeUrl(a.href);
+        const domain = safeDomain(url);
+        if (!domain) continue;
+        if (/(^|\.)google\.com$/.test(domain)) continue;
+        if (/(^|\.)gstatic\.com$/.test(domain)) continue;
+        if (/(^|\.)googleusercontent\.com$/.test(domain)) continue;
+        if (srcSeen.has(url)) continue;
+        srcSeen.add(url);
+        const fav = a.querySelector('img') as HTMLImageElement | null;
+        const title = (
+          a.querySelector('[role="heading"], h3')?.textContent ||
+          a.getAttribute('aria-label') ||
+          a.textContent ||
+          ''
+        )
+          .replace(/在新标签页中打开。?/g, '')
+          .replace(/查看相关链接/g, '')
+          .replace(/\s*-\s*$/, '')
+          .replace(/\s+/g, ' ')
+          .trim();
+        sources.push({
+          title,
+          url,
+          sourceDomain: domain,
+          faviconUrl: fav ? safeUrl(fav.currentSrc || fav.src) : undefined,
+        });
+      }
+
+      const generated = !failVisible && (sources.length > 0 || text.length > 80);
+      // 未生成时连同 sources 一并清空：AI 概览失败时模块根可能向上膨胀到整页，
+      // 误收一堆无关外链当“来源”，故只在确认生成时才返回正文与来源。
+      if (!generated) return { text: '', sources: [], generated: false };
+      return { text, sources, generated };
+    };
+
+    return { pages: dedup, visualMatches: dedup, aiOverview: extractAiOverview() };
   });
 }
 
@@ -233,7 +382,7 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
   const uploadPath = await run.writeArtifact('upload.png', bytes);
   const t0 = Date.now();
 
-  const { pages, visualMatches } = await uploadAndExtract(page, uploadPath, run);
+  const { pages, visualMatches, aiOverview } = await uploadAndExtract(page, uploadPath, run);
 
   const screenshot = await page.screenshot({ fullPage: true });
   await run.writeArtifact('page.png', screenshot);
@@ -242,10 +391,14 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
   const output: LensOutput = {
     pages,
     visualMatches,
+    aiOverview,
     finalUrl: page.url(),
     durationMs: Date.now() - t0,
   };
   await run.writeArtifact('result.json', JSON.stringify({ runId: run.runId, ...output }, null, 2));
-  run.log.info(`done in ${output.durationMs}ms, ${pages.length} item(s)`);
+  run.log.info(
+    `done in ${output.durationMs}ms, ${pages.length} item(s), ` +
+    `AI 概览=${aiOverview.generated ? `已生成(${aiOverview.sources.length} 来源)` : '未生成'}`,
+  );
   return output;
 }
