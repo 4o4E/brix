@@ -29,6 +29,8 @@ export interface CliResult {
 
 function baseUrl(): string {
   const env = getEnv();
+  // 优先用客户端专属的 BRIX_API_URL（连远端 brix）；没配才退回 server 的绑定地址推导。
+  if (env.API_URL) return env.API_URL;
   const host = env.HTTP_HOST === '0.0.0.0' ? '127.0.0.1' : env.HTTP_HOST;
   return `http://${host}:${env.HTTP_PORT}`;
 }
@@ -44,6 +46,18 @@ function authHeaders(): Record<string, string> {
 
 async function readJsonOr<T>(res: Response, fallback: T): Promise<T> {
   try { return await res.json() as T; } catch { return fallback; }
+}
+
+/** 把脚本源码推到目标 brix（PUT /scripts/:name）。用于把本地脚本部署到远端 server。 */
+export async function pushScript(name: string, source: string, language: 'js' | 'ts'): Promise<unknown> {
+  const res = await fetch(`${baseUrl()}/scripts/${encodeURIComponent(name)}`, {
+    method: 'PUT',
+    headers: authHeaders(),
+    body: JSON.stringify({ source, language }),
+  });
+  if (!res.ok) throw new Error(`push ${name} failed: ${res.status} ${await res.text()}`);
+  // 成功路径也容错非 JSON 体（网关可能返回空 200），别让 res.json() 抛掉 push 上下文
+  return readJsonOr<unknown>(res, {});
 }
 
 export async function runViaBrix(scriptName: string, args: unknown, opts: CliOpts = {}): Promise<CliResult> {

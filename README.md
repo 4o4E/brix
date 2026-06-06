@@ -40,6 +40,9 @@ npm run login                          # 通过 brix HTTP API 触发登录脚本
 npm run lens -- ./image.png            # Google Lens 识图
 npm run gemini-draw -- "画一只猫"      # Gemini 生图
 npm run snapshot -- https://example.com [--interactive-only] [--max-depth=N]
+npm run zhihu -- https://www.zhihu.com/question/19550225  # 知乎抓取（正文+图片+评论）
+npm run zhihu -- https://zhuanlan.zhihu.com/p/96956163 --max-comments=50 --download-images
+npm run zhihu-login                    # 打开知乎登录页，等你登录（cookie 留在 profile）
 ```
 
 如果 Google 把自动化的 Chrome 判为"不安全浏览器"，先关掉 serve，用 `open-profile` 在同一个
@@ -64,8 +67,9 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 | 名 | 默认 | 说明 |
 |---|---|---|
 | `BRIX_TOKEN` | — | HTTP 鉴权 token。空则服务拒启 |
-| `BRIX_HTTP_HOST` | `0.0.0.0` | HTTP 监听地址 |
+| `BRIX_HTTP_HOST` | `0.0.0.0` | HTTP 监听地址（server 绑哪） |
 | `BRIX_HTTP_PORT` | `9233` | HTTP 监听端口 |
+| `BRIX_API_URL` | 由 host/port 推导 | CLI 客户端连接的 brix 服务地址（连哪），如 `http://192.168.66.120:9400`。与 server 绑定解耦，可指向远端 brix |
 | `BRIX_USER_DATA_DIR` | `./user-data-dir/default` | Chrome profile 根目录（含 cookie） |
 | `BRIX_DATA_DIR` | `./data` | run 产物根目录（含 downloads） |
 | `BRIX_CHROME_PATH` | 自动探测 | Chrome 可执行文件路径 |
@@ -155,6 +159,8 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/sessions/$SID -i
 | [google-lens](scripts/google-lens.ts) | `{image: string}`（base64/dataURL）或 `{imagePath: string}` | `output.pages: [{title, url, sourceDomain, thumbnailUrl, ...}]`；`output.aiOverview: {text, sources: [{title, url, sourceDomain}], generated}`（AI 概览正文与引用来源） |
 | [snapshot](scripts/snapshot.ts) | `{url?, scope?, interactiveOnly?, maxDepth?}` | `output.snapshot: string`（带 `[ref=eN]`）+ refMap 落 `refs.json` |
 | [login](scripts/login.ts) | — | 打开 accounts.google.com 等用户登录，最多 10 分钟。cookie 留在 profile |
+| [zhihu](scripts/zhihu.ts) | `{url, maxAnswers?, comments?, maxComments?, maxReplies?, includeHtml?, downloadImages?}` | `output.items: [{type, author, authorAvatar, content, images:[{url,width,height,caption}], voteCount, commentCount, url, comments:[{author, content, likeCount, replyTo, children:[...]}], ...}]` + `title`/`questionDetail`/`loginWall`。支持问题/回答/专栏/想法；评论走 comment_v5 API（顶层+嵌套回复）；图片给原图链接，`downloadImages` 时落 `downloads/img-*` |
+| [zhihu-login](scripts/zhihu-login.ts) | — | 打开知乎登录页等用户登录，最多 10 分钟。cookie 留在 profile |
 
 ## 写自定义脚本
 

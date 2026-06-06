@@ -43,6 +43,13 @@ export interface EnvConfig {
   HTTP_HOST: string;
   /** HTTP 监听端口，默认 9233 */
   HTTP_PORT: number;
+  /**
+   * CLI 客户端连接的 brix 服务完整地址（如 http://192.168.66.120:9400）。
+   * 仅 scripts/*.ts 的 CLI 客户端用 —— 把“连哪”和 server 的“绑哪”（HTTP_HOST/PORT）
+   * 解耦：server 可绑 0.0.0.0/LAN IP，客户端却可指向另一台机器上的远端 brix。
+   * 留空时客户端回退用 HTTP_HOST/PORT 推导（本机自调）。env BRIX_API_URL。
+   */
+  API_URL: string | null;
   /** HTTP 请求体字节上限；脚本里传的 base64 图片是大头，默认 64MB（env BRIX_HTTP_MAX_BODY_MB） */
   HTTP_MAX_BODY_BYTES: number;
   /** Chrome 启动后是否最小化窗口（通过 CDP Browser.setWindowBounds），默认 true */
@@ -133,6 +140,7 @@ export function getEnv(): EnvConfig {
     HTTP_TOKEN: process.env.BRIX_TOKEN?.trim() || null,
     HTTP_HOST: process.env.BRIX_HTTP_HOST?.trim() || '0.0.0.0',
     HTTP_PORT: intEnv('BRIX_HTTP_PORT', 9233),
+    API_URL: process.env.BRIX_API_URL?.trim().replace(/\/+$/, '') || null,
     HTTP_MAX_BODY_BYTES: intEnv('BRIX_HTTP_MAX_BODY_MB', 64) * 1024 * 1024,
     START_MINIMIZED: boolEnv('BRIX_CHROME_START_MINIMIZED', true),
     WINDOW_WIDTH: intEnv('BRIX_WINDOW_WIDTH', 0),
