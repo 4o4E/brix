@@ -39,6 +39,7 @@ BRIX_TOKEN=<your-secret> npm run serve
 npm run login                          # 通过 brix HTTP API 触发登录脚本（自动化）
 npm run lens -- ./image.png            # Google Lens 识图
 npm run gemini-draw -- "画一只猫"      # Gemini 生图
+npm run chatgpt-draw -- "画一只猫"     # ChatGPT 生图
 npm run snapshot -- https://example.com [--interactive-only] [--max-depth=N]
 npm run zhihu -- https://www.zhihu.com/question/19550225  # 知乎抓取（正文+图片+评论）
 npm run zhihu -- https://zhuanlan.zhihu.com/p/96956163 --max-comments=50 --download-images
@@ -155,7 +156,8 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/sessions/$SID -i
 
 | 脚本 | args | 输出要点 |
 |---|---|---|
-| [gemini-draw](scripts/gemini-draw.ts) | `{prompt: string}` | 图片落 `downloads/image-N.<ext>`；文字回复在 `output.text` |
+| [gemini-draw](scripts/gemini-draw.ts) | `{prompt: string, images?: [{filename?, mimeType?, dataUrl?/base64?}]}` | 图片落 `downloads/image-N.<ext>`；文字回复在 `output.text` |
+| [chatgpt-draw](scripts/chatgpt-draw.ts) | `{prompt: string, images?: [{filename?, mimeType?, dataUrl?/base64?}]}` | 图片落 `downloads/image-N.<ext>`；文字回复在 `output.text` |
 | [google-lens](scripts/google-lens.ts) | `{image: string}`（base64/dataURL）或 `{imagePath: string}` | `output.pages: [{title, url, sourceDomain, thumbnailUrl, ...}]`；`output.aiOverview: {text, sources: [{title, url, sourceDomain}], generated}`（AI 概览正文与引用来源） |
 | [snapshot](scripts/snapshot.ts) | `{url?, scope?, interactiveOnly?, maxDepth?}` | `output.snapshot: string`（带 `[ref=eN]`）+ refMap 落 `refs.json` |
 | [login](scripts/login.ts) | — | 打开 accounts.google.com 等用户登录，最多 10 分钟。cookie 留在 profile |
@@ -217,7 +219,8 @@ npm run e2e         # 真 Chrome 端到端，需要本机装 Chrome；CI 在 ubu
 brix/
 ├── scripts/                  CLI 入口 + 内置脚本
 │   ├── serve.ts              HTTP 服务入口
-│   ├── gemini-draw.ts        内置脚本
+│   ├── gemini-draw.ts        内置脚本（CLI 客户端）
+│   ├── chatgpt-draw.ts
 │   ├── google-lens.ts
 │   ├── snapshot.ts
 │   └── login.ts

@@ -11,6 +11,7 @@
     "push": "tsx scripts/push.ts",
     "snapshot": "tsx scripts/snapshot.ts",
     "gemini-draw": "tsx scripts/gemini-draw.ts",
+    "chatgpt-draw": "tsx scripts/chatgpt-draw.ts",
     "serve": "tsx scripts/serve.ts",
     "open-profile": "tsx scripts/open-profile.ts",
     "test": "tsx --test src/**/*.test.ts",
