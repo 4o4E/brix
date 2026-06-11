@@ -33,6 +33,12 @@ export interface EnvConfig {
   CRASH_DIR: string;
   /** 控制台日志级别 */
   LOG_LEVEL: LogLevel;
+  /**
+   * 是否落盘调试产物（stage-*.png/html、结果页 page.png/page.html）。默认 false：
+   * 只保留 result.json + downloads/，避免每次 run 堆十几个大截图占满磁盘。
+   * LOG_LEVEL=debug 时隐式开启。单次请求可用 body.debug 覆盖。env BRIX_DEBUG_ARTIFACTS。
+   */
+  DEBUG_ARTIFACTS: boolean;
   /** 空闲多少分钟后自动断开 Playwright 连接（不关 Chrome 进程），0 = 不超时 */
   IDLE_TIMEOUT_MIN: number;
   /** snapshot 文本最大字符数 */
@@ -135,6 +141,7 @@ export function getEnv(): EnvConfig {
     CACHE_DIR: cacheDir,
     CRASH_DIR: crashDir,
     LOG_LEVEL: levelEnv('BRIX_LOG_LEVEL', 'info'),
+    DEBUG_ARTIFACTS: boolEnv('BRIX_DEBUG_ARTIFACTS', levelEnv('BRIX_LOG_LEVEL', 'info') === 'debug'),
     IDLE_TIMEOUT_MIN: intEnv('BRIX_IDLE_TIMEOUT_MIN', 30),
     SNAPSHOT_MAX_CHARS: intEnv('BRIX_SNAPSHOT_MAX_CHARS', 16000),
     HTTP_TOKEN: process.env.BRIX_TOKEN?.trim() || null,

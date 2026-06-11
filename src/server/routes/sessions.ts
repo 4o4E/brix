@@ -59,12 +59,14 @@ export async function handleSessions(req: IncomingMessage, res: ServerResponse, 
     const session = getBrixSession(sid);
     if (!session) { sendError(res, 404, 'not_found', 'session'); return true; }
 
-    let body: { args?: unknown } | null = null;
-    try { body = await readJson<{ args?: unknown }>(req); } catch (e) {
+    let body: { args?: unknown; debug?: unknown } | null = null;
+    try { body = await readJson<{ args?: unknown; debug?: unknown }>(req); } catch (e) {
       sendError(res, 400, 'bad_request', e instanceof Error ? e.message : String(e));
       return true;
     }
     const args = body?.args;
+    // 单次请求可显式开关调试产物（不传则用 BRIX_DEBUG_ARTIFACTS / LOG_LEVEL 默认）。
+    const debug = typeof body?.debug === 'boolean' ? body.debug : undefined;
 
     let loaded;
     try {
@@ -77,7 +79,7 @@ export async function handleSessions(req: IncomingMessage, res: ServerResponse, 
       return true;
     }
 
-    const run = await createRun();
+    const run = await createRun({ debug });
     touchBrixSession(sid);
     log.info(`session ${sid} → script ${name} (${loaded.convention}) → run ${run.runId}`);
 

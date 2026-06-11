@@ -131,7 +131,9 @@ function uploadExt(input: UploadImageInput): string {
   return '.png';
 }
 
+// 阶段诊断快照 —— 只在 debug run 落盘（stage-*.png/html 体积大，平时堆满磁盘）。
 async function snap(page: Page, run: Run, tag: string) {
+  if (!run.debug) return;
   try {
     const png = await page.screenshot({ fullPage: true });
     await run.writeArtifact(`stage-${tag}.png`, png);
@@ -174,12 +176,20 @@ function stateChanged(a: PageState, b: PageState): boolean {
   );
 }
 
+// 完成判定。早先版本硬要求 sendBtnLabel==="发送" 才收尾 —— Gemini 改版后该按钮
+// 的 aria-label / 恢复时机一变，条件永远不成立，于是干等到 maxMs(240s) 才往下走，
+// 表现就是"卡在生成、等到超时才下载"。改成对照 chatgpt-draw 的稳妥逻辑：
+//   - 出图后（singleImageCount>0）只需短静默（3s）即收尾 —— 图是最终内容，不会再变；
+//   - 还没出图时用 8s 静默 + 送出按钮恢复(或不再 loading) 作为兜底完成信号；
+//   - 一旦见过"正在创建图片"文案(loadingHint)，必须真出图才收尾，挡住阶段空窗误判。
 async function waitForResponseComplete(page: Page, run: Run, baselineModelCount: number): Promise<PageState> {
   const idleMs = 8_000;
   const maxMs = 240_000;
   const start = Date.now();
   let last = await getState(page);
   let lastChangeMs = Date.now();
+  let sawGenerating = false;
+  let firstImageMs = -1;
 
   while (Date.now() - start < maxMs) {
     await page.waitForTimeout(500);
@@ -190,16 +200,26 @@ async function waitForResponseComplete(page: Page, run: Run, baselineModelCount:
       run.log.warn(`getState err: ${e instanceof Error ? e.message : e}`);
       continue;
     }
+    if (firstImageMs < 0 && cur.singleImageCount > 0) {
+      firstImageMs = Date.now() - start;
+      run.log.info(`first image observed at +${firstImageMs}ms`);
+    }
+    if (cur.loadingHint) sawGenerating = true;
     if (stateChanged(last, cur)) {
       run.log.debug(`state change at +${Date.now() - start}ms: sendBtn=${cur.sendBtnLabel} model=${cur.modelResponseCount} img=${cur.singleImageCount} dl=${cur.downloadBtnCount} text=${cur.textLength} loading=${cur.loadingHint}`);
       lastChangeMs = Date.now();
       last = cur;
     }
-    if (
+    // 出图后用更短静默(3s)收尾，省掉出图后的干等；还没出图保持 8s 给跨阶段空窗留余量。
+    const idleNeeded = cur.singleImageCount > 0 ? 3_000 : idleMs;
+    const quiet =
       cur.modelResponseCount > baselineModelCount &&
-      cur.sendBtnLabel === '发送' &&
-      Date.now() - lastChangeMs >= idleMs
-    ) {
+      !cur.loadingHint &&
+      (cur.sendBtnLabel === '发送' || cur.singleImageCount > 0) &&
+      Date.now() - lastChangeMs >= idleNeeded;
+    if (quiet && (!sawGenerating || cur.singleImageCount > 0)) {
+      const total = Date.now() - start;
+      run.log.info(`complete at +${total}ms (firstImage=${firstImageMs >= 0 ? firstImageMs + 'ms' : 'n/a'})`);
       return cur;
     }
   }
@@ -207,6 +227,12 @@ async function waitForResponseComplete(page: Page, run: Run, baselineModelCount:
   return last;
 }
 
+// 抓第一张生成图：点原生"下载完整尺寸的图片"按钮，Playwright 监听 download 事件。
+// 该按钮是 on-hover-button（悬停才显形），先 hover 把它显出来再点，避免点到隐藏元素。
+// 注：曾试过"页面内 fetch(blob:src) → 合成 <a download>"做快路径，但 Gemini 的 blob
+// 在页面上下文里 fetch 恒失败（CSP/opaque），徒增一次无效请求，故只走原生按钮。
+// 之前"等到超时才下载"的根因不在这里，而在 waitForResponseComplete 完成判定过严
+// （已修）——下载本身一直是好的。
 async function downloadImages(page: Page, run: Run): Promise<ImageItem[]> {
   const wrappers = page.locator('single-image');
   const count = await wrappers.count();
@@ -214,15 +240,17 @@ async function downloadImages(page: Page, run: Run): Promise<ImageItem[]> {
 
   for (let i = 0; i < count; i++) {
     const wrap = wrappers.nth(i);
+    const img = wrap.locator('img').first();
+    const blobUrl = await img.getAttribute('src').catch(() => null);
+    const alt = await img.getAttribute('alt').catch(() => null);
+
     const dlBtn = wrap.locator('button[aria-label*="下载"], button[aria-label*="Download"]').first();
     if ((await dlBtn.count()) === 0) {
       run.log.warn(`single-image #${i} has no download button, skip`);
       continue;
     }
-
-    const blobUrl = await wrap.locator('img').first().getAttribute('src').catch(() => null);
-    const alt = await wrap.locator('img').first().getAttribute('alt').catch(() => null);
     try {
+      await wrap.hover({ timeout: 5_000 }).catch(() => { /* ignore */ });
       const [download] = await Promise.all([
         page.waitForEvent('download', { timeout: 30_000 }),
         dlBtn.click({ timeout: 10_000 }),
@@ -386,9 +414,12 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
   const text = images.length === 0 ? await extractLastResponseText(page) : '';
   const mode: GeminiOutput['mode'] = images.length > 0 ? 'image' : text ? 'text' : 'empty';
 
-  const screenshot = await page.screenshot({ fullPage: true });
-  await run.writeArtifact('page.png', screenshot);
-  await run.writeArtifact('page.html', await page.content());
+  // 结果页 page.png/html 是诊断产物 —— 只 debug run 落盘；result.json + downloads/ 始终保留。
+  if (run.debug) {
+    const screenshot = await page.screenshot({ fullPage: true });
+    await run.writeArtifact('page.png', screenshot);
+    await run.writeArtifact('page.html', await page.content());
+  }
 
   const output: GeminiOutput = {
     prompt,

@@ -276,6 +276,8 @@ export function createBrixScriptApi(page: Page, run: Run, args: unknown): BrixSc
       if (!/^[A-Za-z0-9._-]{1,80}$/.test(tag)) {
         throw new Error(`brix.snap: tag 必须匹配 [A-Za-z0-9._-]{1,80}，收到 "${tag}"`);
       }
+      // 调试产物：非 debug run 直接跳过，省截图/HTML 落盘。
+      if (!run.debug) return;
       try {
         const png = await page.screenshot({ fullPage: true });
         await run.writeArtifact(`stage-${tag}.png`, png);

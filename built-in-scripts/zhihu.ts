@@ -141,7 +141,9 @@ function parseResource(url: string | undefined, type: ZhihuItem['type']): { reso
   return null;
 }
 
+// 阶段诊断快照 —— 只在 debug run 落盘（stage-*.png/html 体积大，平时堆满磁盘）。
 async function snap(page: Page, run: Run, tag: string) {
+  if (!run.debug) return;
   try { await run.writeArtifact(`stage-${tag}.png`, await page.screenshot({ fullPage: true })); } catch { /* ignore */ }
   try { await run.writeArtifact(`stage-${tag}.html`, await page.content()); } catch { /* ignore */ }
   run.log.info(`stage=${tag} url=${page.url()}`);
@@ -518,8 +520,11 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
     await downloadImages(page, Array.from(new Set(all)), run);
   }
 
-  await run.writeArtifact('page.png', await page.screenshot({ fullPage: true }));
-  await run.writeArtifact('page.html', await page.content());
+  // 结果页 page.png/html 是诊断产物 —— 只 debug run 落盘；result.json + downloads/ 始终保留。
+  if (run.debug) {
+    await run.writeArtifact('page.png', await page.screenshot({ fullPage: true }));
+    await run.writeArtifact('page.html', await page.content());
+  }
 
   const output: ZhihuOutput = {
     pageType,

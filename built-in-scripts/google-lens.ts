@@ -109,7 +109,9 @@ async function coerceArgs(args: unknown): Promise<Buffer> {
   throw new Error('google-lens: args.image or args.imagePath required');
 }
 
+// 阶段诊断快照 —— 只在 debug run 落盘（stage-*.png/html 体积大，平时堆满磁盘）。
 async function snap(page: Page, run: Run, tag: string) {
+  if (!run.debug) return;
   try {
     const png = await page.screenshot({ fullPage: true });
     await run.writeArtifact(`stage-${tag}.png`, png);
@@ -384,9 +386,12 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
 
   const { pages, visualMatches, aiOverview } = await uploadAndExtract(page, uploadPath, run);
 
-  const screenshot = await page.screenshot({ fullPage: true });
-  await run.writeArtifact('page.png', screenshot);
-  await run.writeArtifact('page.html', await page.content());
+  // 结果页 page.png/html 是诊断产物 —— 只 debug run 落盘；result.json 始终保留。
+  if (run.debug) {
+    const screenshot = await page.screenshot({ fullPage: true });
+    await run.writeArtifact('page.png', screenshot);
+    await run.writeArtifact('page.html', await page.content());
+  }
 
   const output: LensOutput = {
     pages,

@@ -38,6 +38,12 @@ export interface Run {
   runId: string;
   dir: string;
   downloadsDir: string;
+  /**
+   * 是否落盘调试产物（stage-*、page.png/html）。脚本据此决定要不要 snap：
+   * false 时只写 result.json + downloads/，省磁盘。来自 BRIX_DEBUG_ARTIFACTS /
+   * LOG_LEVEL=debug，可被单次请求 body.debug 覆盖。
+   */
+  debug: boolean;
   log: Logger;
   saveDownload(d: Download, name?: string): Promise<DownloadedFile>;
   writeArtifact(name: string, data: Buffer | string): Promise<string>;
@@ -61,13 +67,14 @@ function downloadsDirOf(runId: string): string {
   return join(runDirOf(runId), 'downloads');
 }
 
-export async function createRun(): Promise<Run> {
+export async function createRun(opts: { debug?: boolean } = {}): Promise<Run> {
   const runId = nextId();
   const dir = runDirOf(runId);
   const downloadsDir = downloadsDirOf(runId);
   await mkdir(downloadsDir, { recursive: true });
-  log.info(`created run ${runId}`);
-  return new RunImpl(runId, dir, downloadsDir);
+  const debug = opts.debug ?? getEnv().DEBUG_ARTIFACTS;
+  log.info(`created run ${runId}${debug ? ' (debug artifacts on)' : ''}`);
+  return new RunImpl(runId, dir, downloadsDir, debug);
 }
 
 class RunImpl implements Run {
@@ -76,6 +83,7 @@ class RunImpl implements Run {
     public readonly runId: string,
     public readonly dir: string,
     public readonly downloadsDir: string,
+    public readonly debug: boolean,
   ) {
     this.log = createLogger(`run-${runId}`);
   }

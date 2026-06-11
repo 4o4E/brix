@@ -158,7 +158,9 @@ function mimeToExt(mime: string | undefined): string {
   return '.png';
 }
 
+// 阶段诊断快照 —— 只在 debug run 落盘（stage-*.png/html 体积大，平时堆满磁盘）。
 async function snap(page: Page, run: Run, tag: string) {
+  if (!run.debug) return;
   try {
     const png = await page.screenshot({ fullPage: true });
     await run.writeArtifact(`stage-${tag}.png`, png);
@@ -588,9 +590,12 @@ export async function runInSession(page: Page, args: unknown, run: Run): Promise
   const mode: ChatGptOutput['mode'] = images.length > 0 ? 'image' : text ? 'text' : 'empty';
   mark('download');
 
-  const screenshot = await page.screenshot({ fullPage: true });
-  await run.writeArtifact('page.png', screenshot);
-  await run.writeArtifact('page.html', await page.content());
+  // 结果页 page.png/html 是诊断产物 —— 只 debug run 落盘；result.json + downloads/ 始终保留。
+  if (run.debug) {
+    const screenshot = await page.screenshot({ fullPage: true });
+    await run.writeArtifact('page.png', screenshot);
+    await run.writeArtifact('page.html', await page.content());
+  }
   mark('finalize');
 
   const output: ChatGptOutput = {

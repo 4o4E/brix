@@ -77,6 +77,7 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 | `BRIX_CDP_PORT` | `9222` | Chrome remote debugging port |
 | `BRIX_CDP_URL` | `http://127.0.0.1:<port>` | 已运行的 CDP 端点（附加模式） |
 | `BRIX_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
+| `BRIX_DEBUG_ARTIFACTS` | `false`（`LOG_LEVEL=debug` 时隐式 `true`） | 是否落盘调试产物（`stage-*.png/html`、结果页 `page.png/html`）；关时只留 `result.json` + `downloads/`。单次请求可用 body `debug` 覆盖 |
 | `BRIX_IDLE_TIMEOUT_MIN` | `30` | 空闲多少分钟后断开 Playwright（不关 Chrome），0 = 不超时 |
 | `BRIX_DOWNLOAD_DIR` / `BRIX_CACHE_DIR` / `BRIX_CRASH_DIR` | `<DATA_DIR>/...` | 各类 Chrome 内部目录 |
 | `BRIX_SNAPSHOT_MAX_CHARS` | `16000` | snapshot 文本最大字符数 |
