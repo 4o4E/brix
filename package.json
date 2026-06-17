@@ -8,6 +8,7 @@
     "login": "tsx scripts/login.ts",
     "zhihu": "tsx scripts/zhihu.ts",
     "zhihu-login": "tsx scripts/zhihu-login.ts",
+    "boss": "tsx scripts/boss.ts",
     "push": "tsx scripts/push.ts",
     "snapshot": "tsx scripts/snapshot.ts",
     "gemini-draw": "tsx scripts/gemini-draw.ts",
