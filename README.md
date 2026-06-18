@@ -1,8 +1,14 @@
 # brix
 
+简体中文 | [English](README.en.md)
+
 浏览器脚本执行平台：拉起一个真实 Chrome（叠加 [rebrowser-patches][rb]），通过 CDP 接管，对外暴露 HTTP API 让远端调用方在 tab 里跑预置脚本，取回结构化结果和落地的下载文件。
 
-部署目标 Windows。设计背景参见 [docs/design.md](docs/design.md)。
+除整段脚本外，还提供**交互式单步原语**（`/sessions/:sid/actions`：navigate / snapshot / click / fill …，ref 跨调用存活）和一个 **MCP server**，把浏览器能力统一暴露给 LLM——形成「探索（单步试错）→ 固化（写成脚本）→ 生产（直接调用脚本）」的流水线。
+
+部署目标 Windows。许可证 [Apache-2.0](LICENSE)。设计背景参见 [docs/design.md](docs/design.md)。
+
+> 本项目通过源码运行（`tsx`），未发布到 npm。
 
 [rb]: https://github.com/rebrowser/rebrowser-patches
 
@@ -101,9 +107,34 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 | POST | `/sessions` | `{url?:string}` | `201 {sessionId, url}` —— 开新 tab，可选直接 goto |
 | GET | `/sessions` | — | `200 [{sessionId, url, createdAt, lastActiveAt}, ...]` |
 | POST | `/sessions/:sid/scripts/:name` | `{args?:any}` | `200 {runId, output, downloads}` —— 同步等完成 |
+| POST | `/sessions/:sid/actions` | `{op, ...params, returnSnapshot?, debug?}` | `200 {runId, op, result?, snapshot?, downloads?}` —— 单步原语 |
+| GET | `/sessions/:sid/trace` | — | `200 {trace:[{ts, op, params, ok, resultSummary?}, ...]}` —— 动作轨迹（最近 200 条） |
 | DELETE | `/sessions/:sid` | — | `204` |
 
-脚本 throw 时返回 `500 {error:"script_failed", details, runId, downloads}` —— 调用方可拿 `runId` 去 files 端点取已经落地的部分产物。
+脚本 throw 时返回 `500 {error:"script_failed", details, runId, downloads}` —— 调用方可拿 `runId` 去 files 端点取已经落地的部分产物。动作（`/actions`）失败时类似返回 `500 {error:"action_failed", details, runId}`；参数/未知 op 返回 `400 bad_request`。
+
+#### 交互式单步原语（`/sessions/:sid/actions`）
+
+整段脚本之外的另一种执行形态：一次发一个浏览器原语，看结果再决定下一步——LLM 探索网页、人工随时介入（有头共享 tab）都走这里。`snapshot` 产生的 `ref`（`e1/e2`…）**按 session 存活**，跨多次调用有效，直到下次 `snapshot` 刷新。同一 session 串行执行。
+
+`op` 取值（`target` = ref 或 CSS selector）：
+
+| op | 关键参数 | 说明 |
+|---|---|---|
+| `navigate` | `url`, `waitUntil?` | 导航 |
+| `snapshot` | `scope?`, `interactiveOnly?`, `maxDepth?` | 抓带 `[ref=eN]` 的结构化快照 |
+| `click` | `target`, `expectDownload?`, `saveAs?`, `optional?` | 点击；`expectDownload` 时捕获下载落到本 session 的 run |
+| `fill` / `type` | `target`, `value` | 覆盖填入 / 逐字符键入 |
+| `press` | `key` | 按键 |
+| `select` / `hover` | `target`(, `value`) | 选项 / 悬停 |
+| `scroll` | `direction`, `amount?` | 滚动 |
+| `upload` | `target`, `files` | 投文件（base64/dataUrl，不接受宿主路径） |
+| `eval` | `source` | 页面内执行 JS（字符串） |
+| `waitForSelector` / `waitForLoad` / `waitForUrl` | … | 等待条件 |
+| `text` / `attr` / `count` / `content` / `url` / `title` | `selector?` | 读取页面信息 |
+| `screenshot` | `fullPage?` | 截图（返回 base64） |
+
+变更类 op 传 `returnSnapshot:true` 会顺带返回刷新后的快照（含新 refs）。`/trace` 返回你在该 session 上跑过的成功动作序列，便于回看并**固化成脚本**——brix 只给轨迹，脚本由你/LLM 按下文约定编写，不自动生成。
 
 ### 脚本 CRUD（不含执行）
 
@@ -152,6 +183,42 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/runs/$RID/files/image-0.p
 # 4. 关 session
 curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/sessions/$SID -i
 ```
+
+## MCP 服务
+
+把上面的浏览器能力以 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给 LLM 客户端（Claude Desktop / Claude Code 等）。MCP server 本身**不拉 Chrome**，它只是 brix 的又一个 HTTP 调用方——所以先 `npm run serve` 起 brix，再起 MCP：
+
+```bash
+BRIX_TOKEN=<your-secret> npm run mcp
+# brix-mcp running on stdio
+```
+
+stdio 传输。复用 brix 的 env：`BRIX_TOKEN` 必填；`BRIX_API_URL` 可指向远端 brix（否则按 `BRIX_HTTP_HOST/PORT` 推导本机）。
+
+在 MCP 客户端里这样配置（以 Claude Desktop 的 `mcpServers` 为例）：
+
+```json
+{
+  "mcpServers": {
+    "brix": {
+      "command": "npx",
+      "args": ["tsx", "scripts/mcp.ts"],
+      "cwd": "/abs/path/to/brix",
+      "env": { "BRIX_TOKEN": "<your-secret>", "BRIX_API_URL": "http://127.0.0.1:9233" }
+    }
+  }
+}
+```
+
+暴露的 tool（26 个）：
+
+- **会话**：`session_open` / `session_list` / `session_close` / `session_trace`
+- **交互原语**：`browser_navigate` / `browser_snapshot` / `browser_click`（含 `expectDownload`）/ `browser_fill` / `browser_type` / `browser_press` / `browser_select` / `browser_hover` / `browser_scroll` / `browser_upload` / `browser_eval` / `browser_wait` / `browser_read` / `browser_screenshot`（回图块）
+- **逃生口**：`browser_action`（透传任意 `op`）
+- **脚本**：`script_list` / `script_get` / `script_save`（固化）/ `script_delete` / `script_run`（生产）
+- **产物**：`run_files_list` / `run_file_get`（图片回图块）
+
+典型流程：`session_open` → 反复 `browser_snapshot`/`browser_click`/… 探索 → `session_trace` 回看 → `script_save` 固化成 `.js` → 之后 `script_run` 直接调用。
 
 ## 内置脚本
 
@@ -206,11 +273,11 @@ interface Run {
 
 ```bash
 npm run typecheck   # tsc --noEmit
-npm test            # node:test via tsx，153 个单元 + 集成测试，不需要 Chrome
+npm test            # node:test via tsx，单元 + 集成测试（含 MCP server，stub fetch），不需要 Chrome
 npm run e2e         # 真 Chrome 端到端，需要本机装 Chrome；CI 在 ubuntu + xvfb 下跑
 ```
 
-`npm test` 覆盖 `src/runs/*` 的纯逻辑单元 + `src/server/*` 的全部 HTTP 路由集成（auth 矩阵 / scripts CRUD / files CRUD / 错误形状），不起 Chrome 因此快且稳。
+`npm test` 覆盖 `src/runs/*` 的纯逻辑单元、`src/sessions/*` 的会话 helper（ref/锁/trace）、`src/server/*` 的全部 HTTP 路由集成（auth 矩阵 / scripts CRUD / files CRUD / actions 契约 / 错误形状），以及 `src/mcp/*`（经 in-memory client 驱动真实 MCP server、stub fetch 当 fake brix）。全程不起 Chrome，快且稳。
 
 `npm run e2e` 走完整链路：spawn 真 `tsx scripts/serve.ts` 子进程 → 拉真 Chrome → 在本机 fixture 页上跑 snapshot 和触发下载的脚本 → 验证 `/sessions` `/runs/:id/files` 全链路。GitHub Actions（`.github/workflows/e2e.yml`）在每次 push/PR 到 main/master 时跑一遍。
 
@@ -220,6 +287,7 @@ npm run e2e         # 真 Chrome 端到端，需要本机装 Chrome；CI 在 ubu
 brix/
 ├── scripts/                  CLI 入口 + 内置脚本
 │   ├── serve.ts              HTTP 服务入口
+│   ├── mcp.ts                MCP server 入口（stdio）
 │   ├── gemini-draw.ts        内置脚本（CLI 客户端）
 │   ├── chatgpt-draw.ts
 │   ├── google-lens.ts
@@ -229,10 +297,21 @@ brix/
 │   ├── config.ts             环境变量
 │   ├── browser/              真实 Chrome 拉起 + CDP 接管
 │   ├── runs/                 Run 抽象（id/mime/cli/run）
-│   ├── scripts/              脚本 CRUD（registry）
-│   ├── sessions/             会话注册表（内存 Map）
-│   ├── server/               HTTP 服务（http + auth + util + routes/）
+│   ├── scripts/              脚本 CRUD（registry）+ BrixScriptApi
+│   ├── sessions/             会话注册表（内存 Map）+ ref/run/锁/trace
+│   ├── server/               HTTP 服务（http + auth + util + routes/，含 actions）
+│   ├── mcp/                  MCP server（server + client）
 │   └── utils/                logger
 └── docs/
     └── design.md             原始设计文档
 ```
+
+## 许可证
+
+[Apache License 2.0](LICENSE) © 2026 4o4E and brix contributors。
+
+## 免责声明
+
+本项目是浏览器自动化基础设施，仅供用于你**有权访问/操作**的站点与账号（如你自己的账号、获授权的测试目标）。使用者须遵守目标站点的服务条款与所在地法律。项目**不做**验证码绕过或对抗式反爬（见 [docs/design.md](docs/design.md) 非目标）。因滥用造成的后果由使用者自负。
+
+> 安全提示：持有 `BRIX_TOKEN` 即可在你的浏览器 profile 上任意操作（含已登录态、`eval` 任意页面 JS、读写下载文件）。请将 token 视同该 profile 的完全访问权，仅在可信网络/可信调用方之间使用。

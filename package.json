@@ -2,7 +2,33 @@
   "name": "brix",
   "version": "0.0.1",
   "private": true,
+  "description": "Browser script execution platform: drives a real anti-detect Chrome over CDP and exposes browser primitives to LLMs via HTTP + MCP.",
+  "license": "Apache-2.0",
+  "author": "4o4E",
   "type": "module",
+  "homepage": "https://github.com/4o4E/brix#readme",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/4o4E/brix.git"
+  },
+  "bugs": {
+    "url": "https://github.com/4o4E/brix/issues"
+  },
+  "keywords": [
+    "browser-automation",
+    "mcp",
+    "model-context-protocol",
+    "playwright",
+    "patchright",
+    "chrome",
+    "cdp",
+    "anti-detection",
+    "scraping",
+    "llm"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
   "scripts": {
     "lens": "tsx scripts/google-lens.ts",
     "login": "tsx scripts/login.ts",
