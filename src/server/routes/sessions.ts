@@ -8,18 +8,21 @@
 
 import type { IncomingMessage, ServerResponse } from 'node:http';
 import type { Page } from 'patchright';
-import { createBrixSession, closeBrixSession, getBrixSession, listBrixSessions, touchBrixSession } from '../../sessions/registry.js';
+import { createBrixSession, closeBrixSession, getBrixSession, listBrixSessions, touchBrixSession, withSessionLock } from '../../sessions/registry.js';
 import { BadScriptError, NotFoundError, loadScriptModule } from '../../scripts/registry.js';
 import { createBrixScriptApi } from '../../scripts/api.js';
 import { createRun } from '../../runs/run.js';
 import { createLogger } from '../../utils/logger.js';
 import { readJson, sendError, sendJson, sendNoContent } from '../util.js';
+import { BadActionError, executeAction } from './actions.js';
 
 const log = createLogger('routes-sessions');
 
 const RE_ROOT = /^\/sessions\/?$/;
 const RE_ITEM = /^\/sessions\/([^/]+)\/?$/;
 const RE_SCRIPT = /^\/sessions\/([^/]+)\/scripts\/([^/]+)\/?$/;
+const RE_ACTIONS = /^\/sessions\/([^/]+)\/actions\/?$/;
+const RE_TRACE = /^\/sessions\/([^/]+)\/trace\/?$/;
 
 export async function handleSessions(req: IncomingMessage, res: ServerResponse, pathname: string): Promise<boolean> {
   const method = req.method ?? 'GET';
@@ -84,15 +87,16 @@ export async function handleSessions(req: IncomingMessage, res: ServerResponse, 
     log.info(`session ${sid} → script ${name} (${loaded.convention}) → run ${run.runId}`);
 
     try {
-      let output: unknown;
-      if (loaded.convention === 'brix-api') {
-        // 新约定：注入 BrixScriptApi，脚本拿不到 page/run 句柄
-        const brix = createBrixScriptApi(session.page as Page, run, args);
-        output = await loaded.runInSession(brix);
-      } else {
+      // 与交互动作共享单 session 串行锁：并发的脚本/动作在同一 tab 上排队而非互相踩踏。
+      const output = await withSessionLock(session, async () => {
+        if (loaded.convention === 'brix-api') {
+          // 新约定：注入 BrixScriptApi，脚本拿不到 page/run 句柄
+          const brix = createBrixScriptApi(session.page as Page, run, args);
+          return await loaded.runInSession(brix);
+        }
         // 旧约定：runInSession(page, args, run)（迁移期保留给 .ts 内置脚本）
-        output = await loaded.runInSession(session.page as Page, args, run);
-      }
+        return await loaded.runInSession(session.page as Page, args, run);
+      });
       const downloads = await run.listDownloads();
       touchBrixSession(sid);
       sendJson(res, 200, { runId: run.runId, output, downloads });
@@ -102,6 +106,45 @@ export async function handleSessions(req: IncomingMessage, res: ServerResponse, 
       log.error(`runInSession threw runId=${run.runId}: ${errMsg}`);
       sendJson(res, 500, { error: 'script_failed', details: errMsg, runId: run.runId, downloads });
     }
+    return true;
+  }
+
+  const actionsMatch = RE_ACTIONS.exec(pathname);
+  if (actionsMatch) {
+    if (method !== 'POST') { sendError(res, 405, 'method_not_allowed'); return true; }
+    const sid = decodeURIComponent(actionsMatch[1]);
+    const session = getBrixSession(sid);
+    if (!session) { sendError(res, 404, 'not_found', 'session'); return true; }
+
+    let body: Record<string, unknown> | null = null;
+    try { body = await readJson<Record<string, unknown>>(req); } catch (e) {
+      sendError(res, 400, 'bad_request', e instanceof Error ? e.message : String(e));
+      return true;
+    }
+    if (!body || typeof body !== 'object') { sendError(res, 400, 'bad_request', 'body 必填'); return true; }
+
+    touchBrixSession(sid);
+    try {
+      // 单 session 串行：并发动作在同一 tab 上排队，不互相踩踏。
+      const result = await withSessionLock(session, () => executeAction(session, body as Record<string, unknown>));
+      touchBrixSession(sid);
+      sendJson(res, 200, result);
+    } catch (e) {
+      if (e instanceof BadActionError) { sendError(res, 400, 'bad_request', e.message); return true; }
+      const errMsg = e instanceof Error ? e.message : String(e);
+      log.error(`action failed sid=${sid}: ${errMsg}`);
+      sendJson(res, 500, { error: 'action_failed', details: errMsg, runId: session.interactiveRun?.runId });
+    }
+    return true;
+  }
+
+  const traceMatch = RE_TRACE.exec(pathname);
+  if (traceMatch) {
+    if (method !== 'GET') { sendError(res, 405, 'method_not_allowed'); return true; }
+    const sid = decodeURIComponent(traceMatch[1]);
+    const session = getBrixSession(sid);
+    if (!session) { sendError(res, 404, 'not_found', 'session'); return true; }
+    sendJson(res, 200, { trace: session.trace ?? [] });
     return true;
   }
 

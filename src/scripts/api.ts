@@ -107,9 +107,9 @@ export interface BrixScriptApi {
    * 当前 PR 用 Node 侧 refMap 解析；PR 2 会改成 page-side WeakMap，API 不变。
    */
   click(refOrSelector: string, opts?: ClickOpts): Promise<void>;
-  /** 填入（覆盖已有内容） */
+  /** 填入（覆盖已有内容）；selector 可以是 ref 或 CSS selector。 */
   fill(selector: string, value: string): Promise<void>;
-  /** 键入（逐字符） */
+  /** 键入（逐字符）；selector 可以是 ref 或 CSS selector。 */
   type(selector: string, value: string, opts?: { delay?: number }): Promise<void>;
   /** 按键 */
   press(key: string): Promise<void>;
@@ -118,6 +118,12 @@ export interface BrixScriptApi {
    * **不接受宿主文件系统路径**（这是现有 google-lens imagePath 的口子，新 API 关掉）。
    */
   setInputFiles(selector: string, file: FileInput | FileInput[]): Promise<void>;
+  /** 在 <select> 上选项；input 可以是 ref 或 selector。value 可为单值或多值。 */
+  select(refOrSelector: string, value: string | string[]): Promise<void>;
+  /** 悬停；input 可以是 ref 或 selector。 */
+  hover(refOrSelector: string, opts?: { timeout?: number }): Promise<void>;
+  /** 滚动当前页面（鼠标滚轮）。 */
+  scroll(direction: 'up' | 'down', amount?: number): Promise<void>;
 
   // ---- 下载 ----
   /**
@@ -137,9 +143,16 @@ export interface BrixScriptApi {
   writeArtifact(name: string, data: Buffer | string): Promise<void>;
 }
 
-/** session 路由用：从 page + run + args 构造一个 BrixScriptApi */
-export function createBrixScriptApi(page: Page, run: Run, args: unknown): BrixScriptApi {
-  let ctx: BrowserRefContext = createBrowserRefContext();
+/**
+ * session 路由用：从 page + run + args 构造一个 BrixScriptApi。
+ *
+ * externalCtx：传入则 ref 上下文归调用方所有（session 作用域），snapshot() 原地清空
+ * 而不替换绑定，于是 refs 跨多次 createBrixScriptApi 调用存活（交互式单步执行靠这个）。
+ * 不传则 api 自己持有 ctx，每次 snapshot 整体重建 —— 旧脚本路径行为不变。
+ */
+export function createBrixScriptApi(page: Page, run: Run, args: unknown, externalCtx?: BrowserRefContext): BrixScriptApi {
+  const owns = externalCtx === undefined;
+  let ctx: BrowserRefContext = externalCtx ?? createBrowserRefContext();
 
   const resolveSelector = async (refOrSelector: string): Promise<string> => {
     if (REF_RE.test(refOrSelector)) {
@@ -199,7 +212,10 @@ export function createBrixScriptApi(page: Page, run: Run, args: unknown): BrixSc
     sleep: (ms) => new Promise<void>((resolve) => setTimeout(resolve, ms)),
 
     async snapshot(opts) {
-      ctx = createBrowserRefContext();
+      // owns：api 私有 ctx，整体重建（旧行为）；否则 session 持有 ctx，原地清空保持引用，
+      // 让此前/此后用同一 session ctx 构造的 api 仍能解析新 refs。
+      if (owns) ctx = createBrowserRefContext();
+      else { ctx.refMap.clear(); ctx.refCounter = 0; }
       const { scope, ...rest } = opts ?? {};
       const formatOpts: Partial<FormatOptions> = {};
       if (typeof rest.interactiveOnly === 'boolean') formatOpts.interactiveOnly = rest.interactiveOnly;
@@ -240,10 +256,10 @@ export function createBrixScriptApi(page: Page, run: Run, args: unknown): BrixSc
       }
     },
     async fill(selector, value) {
-      await page.locator(selector).first().fill(value);
+      await page.locator(await resolveSelector(selector)).first().fill(value);
     },
     async type(selector, value, opts) {
-      const loc = page.locator(selector).first();
+      const loc = page.locator(await resolveSelector(selector)).first();
       await loc.click();
       await loc.pressSequentially(value, { delay: opts?.delay ?? 8 });
     },
@@ -255,6 +271,18 @@ export function createBrixScriptApi(page: Page, run: Run, args: unknown): BrixSc
       const handle = await page.waitForSelector(selector, { state: 'attached', timeout: 15_000 });
       // ElementHandle.setInputFiles 接受 { name, mimeType, buffer }
       await (handle as ElementHandle<HTMLInputElement>).setInputFiles(files);
+    },
+    async select(refOrSelector, value) {
+      const sel = await resolveSelector(refOrSelector);
+      await page.locator(sel).first().selectOption(value as string | string[]);
+    },
+    async hover(refOrSelector, opts) {
+      const sel = await resolveSelector(refOrSelector);
+      await page.locator(sel).first().hover({ timeout: opts?.timeout ?? 10_000 });
+    },
+    async scroll(direction, amount = 500) {
+      await page.mouse.wheel(0, direction === 'down' ? amount : -amount);
+      await page.waitForTimeout(300);
     },
 
     async captureDownload(triggerFn, opts) {
