@@ -62,6 +62,9 @@ const protectedPaths: Array<[string, string]> = [
   ['POST', '/sessions'],
   ['POST', '/sessions/sid/scripts/foo'],
   ['DELETE', '/sessions/sid'],
+  ['GET', '/mcp'],
+  ['POST', '/mcp'],
+  ['DELETE', '/mcp'],
 ];
 
 for (const [method, path] of protectedPaths) {

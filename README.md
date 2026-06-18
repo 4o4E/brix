@@ -35,7 +35,7 @@ BRIX_TOKEN=<your-secret> npm run serve
 
 - `BRIX_TOKEN` 必须设置，否则启动失败。
 - `/health` 公开；其余端点需要 `Authorization: Bearer <token>` 或 `X-Brix-Token: <token>`。
-- 首次请求会拉起 Chrome 进程（CDP `--remote-debugging-port=9222`），常驻复用。
+- 首次请求会拉起 Chrome 进程（默认 CDP `--remote-debugging-port=0` 自动挑空闲端口），常驻复用。
 
 ## CLI
 
@@ -80,8 +80,8 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 | `BRIX_USER_DATA_DIR` | `./user-data-dir/default` | Chrome profile 根目录（含 cookie） |
 | `BRIX_DATA_DIR` | `./data` | run 产物根目录（含 downloads） |
 | `BRIX_CHROME_PATH` | 自动探测 | Chrome 可执行文件路径 |
-| `BRIX_CDP_PORT` | `9222` | Chrome remote debugging port |
-| `BRIX_CDP_URL` | `http://127.0.0.1:<port>` | 已运行的 CDP 端点（附加模式） |
+| `BRIX_CDP_PORT` | `0` | Chrome remote debugging port；0 = 自动挑空闲端口（Windows 上更稳） |
+| `BRIX_CDP_URL` | — | 已运行的 CDP 端点（附加模式），如 `http://127.0.0.1:9222` |
 | `BRIX_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `BRIX_DEBUG_ARTIFACTS` | `false`（`LOG_LEVEL=debug` 时隐式 `true`） | 是否落盘调试产物（`stage-*.png/html`、结果页 `page.png/html`）；关时只留 `result.json` + `downloads/`。单次请求可用 body `debug` 覆盖 |
 | `BRIX_IDLE_TIMEOUT_MIN` | `30` | 空闲多少分钟后断开 Playwright（不关 Chrome），0 = 不超时 |
@@ -138,13 +138,13 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 
 ### 脚本 CRUD（不含执行）
 
-`scripts/` 目录下的 `.ts` 文件。内置脚本（gemini-draw / google-lens / snapshot / login）走同一套，调用方有 token 就有权改/删；想恢复就 PUT 回去。
+`scripts/` 目录下的 `.js` / `.ts` 文件。默认写入 `.js`，使用新的 brix-api 约定：`runInSession(brix)`；显式传 `language:"ts"` 时走 legacy 约定：`runInSession(page, args, run)`，主要给内置脚本迁移期兼容用。内置脚本（gemini-draw / google-lens / snapshot / login）走同一套，调用方有 token 就有权改/删；想恢复就 PUT 回去。
 
 | Method | Path | Body | 响应 |
 |---|---|---|---|
 | GET | `/scripts` | — | `200 [{name, description?, argsExample?, bytes, createdAt, updatedAt}, ...]` |
 | GET | `/scripts/:name` | — | `200 {meta, source}` |
-| PUT | `/scripts/:name` | `{source:string}` | `200 {meta}` —— 写前用 `tsc --noEmit` 做语法检查，失败 `400 bad_script` |
+| PUT | `/scripts/:name` | `{source:string, language?:"js"|"ts"}` | `200 {meta}` —— 默认 `.js` 做 AST 校验（拒 import/require/eval/Function，要求导出 `runInSession`）；`language:"ts"` 做 legacy 语法检查，失败 `400 bad_script` |
 | DELETE | `/scripts/:name` | — | `204` |
 
 `name` 规则：`^[a-z0-9][a-z0-9-]{0,63}$`。源码上限 1 MB。
@@ -186,26 +186,22 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/sessions/$SID -i
 
 ## MCP 服务
 
-把上面的浏览器能力以 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给 LLM 客户端（Claude Desktop / Claude Code 等）。MCP server 本身**不拉 Chrome**，它只是 brix 的又一个 HTTP 调用方——所以先 `npm run serve` 起 brix，再起 MCP：
+把上面的浏览器能力以 [Model Context Protocol](https://modelcontextprotocol.io) 暴露给 LLM 客户端（Claude Desktop / Claude Code 等）。brix 在同一个 HTTP 服务里提供标准 **Streamable HTTP** MCP endpoint：
 
 ```bash
-BRIX_TOKEN=<your-secret> npm run mcp
-# brix-mcp running on stdio
+BRIX_TOKEN=<your-secret> npm run serve
+# MCP endpoint: http://127.0.0.1:9233/mcp
 ```
 
-stdio 传输。复用 brix 的 env：`BRIX_TOKEN` 必填；`BRIX_API_URL` 可指向远端 brix（否则按 `BRIX_HTTP_HOST/PORT` 推导本机）。
+MCP endpoint 是 `POST/GET/DELETE /mcp`，复用 brix HTTP 鉴权：客户端需要传 `Authorization: Bearer <token>` 或 `X-Brix-Token: <token>`。`/mcp` 内部仍复用 brix 的 HTTP API；`BRIX_API_URL` 可指向远端 brix（否则按 `BRIX_HTTP_HOST/PORT` 推导本机）。
 
-在 MCP 客户端里这样配置（以 Claude Desktop 的 `mcpServers` 为例）：
+在支持 Streamable HTTP 的 MCP 客户端里配置 URL：
 
 ```json
 {
-  "mcpServers": {
-    "brix": {
-      "command": "npx",
-      "args": ["tsx", "scripts/mcp.ts"],
-      "cwd": "/abs/path/to/brix",
-      "env": { "BRIX_TOKEN": "<your-secret>", "BRIX_API_URL": "http://127.0.0.1:9233" }
-    }
+  "url": "http://127.0.0.1:9233/mcp",
+  "headers": {
+    "Authorization": "Bearer <your-secret>"
   }
 }
 ```
@@ -234,40 +230,42 @@ stdio 传输。复用 brix 的 env：`BRIX_TOKEN` 必填；`BRIX_API_URL` 可指
 
 ## 写自定义脚本
 
-约定：
+默认约定（`.js` / brix-api）：
 
-```ts
-// scripts/my-thing.ts
-import type { Page } from 'patchright';
-import type { Run } from '../src/runs/run.js';
-
+```js
 export const meta = {
   description: '...',
   argsExample: { foo: 'bar' },
 };
 
-export async function runInSession(page: Page, args: unknown, run: Run): Promise<unknown> {
-  // 操作 page；产物用 run.writeArtifact / run.saveDownload 落地
-  await page.goto('https://example.com');
-  await run.writeArtifact('result.json', JSON.stringify({ title: await page.title() }));
-  return { title: await page.title() };
+export async function runInSession(brix) {
+  await brix.goto('https://example.com');
+  const title = await brix.title();
+  await brix.writeArtifact('result.json', JSON.stringify({ title }));
+  return { title, args: brix.args };
 }
 ```
 
-`Run` 接口：
+`brix` 是受限的浏览器与产物 API，不暴露原生 `page` / `run` 句柄。常用能力：
 
 ```ts
-interface Run {
-  runId: string;
-  dir: string;            // <DATA_DIR>/runs/<runId>/ 脚本私有，不走 HTTP
-  downloadsDir: string;   // <DATA_DIR>/runs/<runId>/downloads/ 走 HTTP /runs/:id/files
-  saveDownload(d: Download, name?: string): Promise<DownloadedFile>;
-  writeArtifact(name: string, data: Buffer | string): Promise<string>;
-  listDownloads(): Promise<DownloadedFile[]>;
+interface BrixScriptApi {
+  readonly args: unknown;
+  goto(url: string, opts?: { waitUntil?: 'load' | 'domcontentloaded' | 'networkidle'; timeout?: number }): Promise<void>;
+  snapshot(opts?: { scope?: string; interactiveOnly?: boolean; maxDepth?: number }): Promise<{ text: string; refCount: number }>;
+  click(target: string, opts?: { timeout?: number; optional?: boolean }): Promise<void>;
+  fill(target: string, value: string): Promise<void>;
+  type(target: string, value: string, opts?: { delay?: number }): Promise<void>;
+  press(key: string): Promise<void>;
+  evalInPage<T = unknown>(source: string): Promise<T>;
+  title(): Promise<string>;
+  text(selector: string): Promise<string>;
+  screenshot(opts?: { fullPage?: boolean }): Promise<Buffer>;
+  writeArtifact(name: string, data: Buffer | string): Promise<void>;
 }
 ```
 
-通过 `PUT /scripts/my-thing` 写进去，之后 `POST /sessions/:sid/scripts/my-thing` 调用即可。
+通过 `PUT /scripts/my-thing` 写进去，之后 `POST /sessions/:sid/scripts/my-thing` 调用即可。只有确实要兼容旧脚本时才传 `language:"ts"`；这时函数签名是 legacy 的 `runInSession(page, args, run)`。
 
 ## 开发
 
@@ -277,7 +275,7 @@ npm test            # node:test via tsx，单元 + 集成测试（含 MCP server
 npm run e2e         # 真 Chrome 端到端，需要本机装 Chrome；CI 在 ubuntu + xvfb 下跑
 ```
 
-`npm test` 覆盖 `src/runs/*` 的纯逻辑单元、`src/sessions/*` 的会话 helper（ref/锁/trace）、`src/server/*` 的全部 HTTP 路由集成（auth 矩阵 / scripts CRUD / files CRUD / actions 契约 / 错误形状），以及 `src/mcp/*`（经 in-memory client 驱动真实 MCP server、stub fetch 当 fake brix）。全程不起 Chrome，快且稳。
+`npm test` 覆盖 `src/runs/*` 的纯逻辑单元、`src/sessions/*` 的会话 helper（ref/锁/trace）、`src/server/*` 的全部 HTTP 路由集成（auth 矩阵 / scripts CRUD / files CRUD / actions 契约 / MCP HTTP endpoint / 错误形状），以及 `src/mcp/*`（经 in-memory client 与 Streamable HTTP client 驱动真实 MCP server、stub fetch 当 fake brix）。全程不起 Chrome，快且稳。
 
 `npm run e2e` 走完整链路：spawn 真 `tsx scripts/serve.ts` 子进程 → 拉真 Chrome → 在本机 fixture 页上跑 snapshot 和触发下载的脚本 → 验证 `/sessions` `/runs/:id/files` 全链路。GitHub Actions（`.github/workflows/e2e.yml`）在每次 push/PR 到 main/master 时跑一遍。
 
@@ -287,7 +285,6 @@ npm run e2e         # 真 Chrome 端到端，需要本机装 Chrome；CI 在 ubu
 brix/
 ├── scripts/                  CLI 入口 + 内置脚本
 │   ├── serve.ts              HTTP 服务入口
-│   ├── mcp.ts                MCP server 入口（stdio）
 │   ├── gemini-draw.ts        内置脚本（CLI 客户端）
 │   ├── chatgpt-draw.ts
 │   ├── google-lens.ts
@@ -299,7 +296,7 @@ brix/
 │   ├── runs/                 Run 抽象（id/mime/cli/run）
 │   ├── scripts/              脚本 CRUD（registry）+ BrixScriptApi
 │   ├── sessions/             会话注册表（内存 Map）+ ref/run/锁/trace
-│   ├── server/               HTTP 服务（http + auth + util + routes/，含 actions）
+│   ├── server/               HTTP 服务（http + auth + util + routes/，含 actions + mcp）
 │   ├── mcp/                  MCP server（server + client）
 │   └── utils/                logger
 └── docs/

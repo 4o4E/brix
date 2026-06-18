@@ -186,6 +186,18 @@ test('run_file_get：二进制→base64 文本', async () => {
   await client.close();
 });
 
+test('run_file_get：大二进制不返回截断 base64', async () => {
+  handler = () => ({ bytes: Buffer.alloc(30_000, 1), contentType: 'application/pdf' });
+  const client = await connectClient();
+  const res = await call(client, 'run_file_get', { runId: 'r', name: 'big.pdf' });
+  const body = res.content[0].text!;
+  assert.equal(res.content[0].type, 'text');
+  assert.ok(body.includes('base64 too large'));
+  assert.ok(body.includes('/runs/r/files/big.pdf'));
+  assert.ok(!body.includes('AQEBAQEBAQ'), '不应返回看似可用但已截断的 base64');
+  await client.close();
+});
+
 // ---- 生命周期 / 脚本透传 ----
 
 test('session_open POST /sessions 并回 sessionId', async () => {

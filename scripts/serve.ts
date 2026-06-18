@@ -12,6 +12,7 @@ import { createServer } from '../src/server/http.js';
 import { browserEvents, closeSession } from '../src/browser/session.js';
 import { createLogger } from '../src/utils/logger.js';
 import { syncBuiltins } from '../src/scripts/bootstrap.js';
+import { closeMcpTransports } from '../src/server/routes/mcp.js';
 
 const log = createLogger('serve');
 
@@ -37,6 +38,7 @@ async function main() {
     shuttingDown = true;
     log.info(`got ${sig}, shutting down`);
     await new Promise<void>((res) => server.close(() => res()));
+    await closeMcpTransports().catch(() => { /* ignore */ });
     await closeSession().catch(() => { /* ignore */ });
     process.exit(0);
   };

@@ -1,4 +1,4 @@
-// brix-mcp：把 brix 的浏览器原语统一暴露给 LLM 的 stdio MCP server。
+// brix-mcp：把 brix 的浏览器原语统一暴露给 LLM 的 MCP server。
 //
 // 两阶段流水线：
 //   探索期 —— LLM 用 browser_* 原语一步步驱动某个 session 的 tab，ref（snapshot 产生的
@@ -6,7 +6,7 @@
 //             调用方自行决定何时暂停发动作）。
 //   固化期 —— 走通后用 script_save 把序列写成 .js，之后 script_run 直接调用。
 //
-// 本 server 不碰浏览器，只经 HTTP 调 brix（见 client.ts）。
+// 本 server 不碰浏览器，只经 HTTP 调 brix（见 client.ts）；HTTP transport 由 /mcp 路由承载。
 
 import { McpServer } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { z } from 'zod';
@@ -369,7 +369,7 @@ name 规则：^[a-z0-9][a-z0-9-]{0,63}$。`,
 
   server.registerTool('run_file_get', {
     title: 'Get run file',
-    description: `取某个 run 的一个下载文件。图片返回图块；文本返回内容；其余返回 base64。`,
+    description: `取某个 run 的一个下载文件。图片返回图块；文本返回内容；小型二进制返回 base64，过大时提示改走 HTTP 文件端点。`,
     inputSchema: { runId: z.string().min(1), name: z.string().min(1) },
     annotations: RO,
   }, async ({ runId, name }) => guard(async () => {
@@ -379,7 +379,11 @@ name 规则：^[a-z0-9][a-z0-9-]{0,63}$。`,
     const buf = Buffer.from(await res.arrayBuffer());
     if (mime.startsWith('image/')) return { content: [{ type: 'image', data: buf.toString('base64'), mimeType: mime }] };
     if (mime.startsWith('text/') || mime.includes('json')) return text(buf.toString('utf-8'));
-    return text(`(${mime}, ${buf.length} bytes, base64)\n${buf.toString('base64').slice(0, CHARACTER_LIMIT)}`);
+    const base64 = buf.toString('base64');
+    if (base64.length > CHARACTER_LIMIT) {
+      return text(`(${mime}, ${buf.length} bytes)\nbase64 too large for MCP text response (${base64.length} chars > ${CHARACTER_LIMIT}); use HTTP GET /runs/${enc(runId)}/files/${enc(name)} instead.`);
+    }
+    return text(`(${mime}, ${buf.length} bytes, base64)\n${base64}`);
   }));
 
   return server;

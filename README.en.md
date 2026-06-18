@@ -35,7 +35,7 @@ BRIX_TOKEN=<your-secret> npm run serve
 
 - `BRIX_TOKEN` is required, otherwise startup fails.
 - `/health` is public; all other endpoints require `Authorization: Bearer <token>` or `X-Brix-Token: <token>`.
-- The first request launches the Chrome process (CDP `--remote-debugging-port=9222`), kept resident and reused.
+- The first request launches the Chrome process (CDP defaults to `--remote-debugging-port=0`, so Chrome picks a free port), kept resident and reused.
 
 ## CLI
 
@@ -78,8 +78,8 @@ npm run gemini-draw -- --json-args '{"prompt":"draw a cat"}'
 | `BRIX_USER_DATA_DIR` | `./user-data-dir/default` | Chrome profile root (holds cookies) |
 | `BRIX_DATA_DIR` | `./data` | run-artifact root (holds downloads) |
 | `BRIX_CHROME_PATH` | auto-detected | Chrome executable path |
-| `BRIX_CDP_PORT` | `9222` | Chrome remote debugging port |
-| `BRIX_CDP_URL` | `http://127.0.0.1:<port>` | already-running CDP endpoint (attach mode) |
+| `BRIX_CDP_PORT` | `0` | Chrome remote debugging port; 0 = let Chrome pick a free port (more reliable on Windows) |
+| `BRIX_CDP_URL` | — | already-running CDP endpoint (attach mode), e.g. `http://127.0.0.1:9222` |
 | `BRIX_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `BRIX_DEBUG_ARTIFACTS` | `false` (implicit `true` when `LOG_LEVEL=debug`) | whether to persist debug artifacts (`stage-*.png/html`, result-page `page.png/html`); when off only `result.json` + `downloads/` remain. Per-request override via body `debug` |
 | `BRIX_IDLE_TIMEOUT_MIN` | `30` | minutes idle before disconnecting Playwright (Chrome stays up), 0 = no timeout |
@@ -136,13 +136,13 @@ Passing `returnSnapshot:true` on a mutating op also returns the refreshed snapsh
 
 ### Scripts CRUD (no execution)
 
-`.ts`/`.js` files under the `scripts/` directory. Built-in scripts (gemini-draw / google-lens / snapshot / login) go through the same path; with the token you can edit/delete them; PUT them back to restore.
+`.js`/`.ts` files under the `scripts/` directory. Writes default to `.js` and use the new brix-api convention: `runInSession(brix)`. Passing `language:"ts"` explicitly uses the legacy convention: `runInSession(page, args, run)`, kept mainly for the built-in-script migration period. Built-in scripts (gemini-draw / google-lens / snapshot / login) go through the same path; with the token you can edit/delete them; PUT them back to restore.
 
 | Method | Path | Body | Response |
 |---|---|---|---|
 | GET | `/scripts` | — | `200 [{name, description?, argsExample?, bytes, createdAt, updatedAt}, ...]` |
 | GET | `/scripts/:name` | — | `200 {meta, source}` |
-| PUT | `/scripts/:name` | `{source:string}` | `200 {meta}` — syntax-checked with `tsc --noEmit` before writing, failure → `400 bad_script` |
+| PUT | `/scripts/:name` | `{source:string, language?:"js"|"ts"}` | `200 {meta}` — default `.js` gets AST validation (blocks import/require/eval/Function and requires `runInSession` export); `language:"ts"` uses legacy syntax checking, failure → `400 bad_script` |
 | DELETE | `/scripts/:name` | — | `204` |
 
 `name` rule: `^[a-z0-9][a-z0-9-]{0,63}$`. Source size limit 1 MB.
@@ -184,26 +184,22 @@ curl -X DELETE -H "Authorization: Bearer $TOKEN" $BASE/sessions/$SID -i
 
 ## MCP server
 
-Exposes the browser capabilities above to LLM clients (Claude Desktop / Claude Code, etc.) via the [Model Context Protocol](https://modelcontextprotocol.io). The MCP server itself **does not launch Chrome** — it is just another HTTP caller of brix. So start brix first with `npm run serve`, then start the MCP server:
+Exposes the browser capabilities above to LLM clients (Claude Desktop / Claude Code, etc.) via the [Model Context Protocol](https://modelcontextprotocol.io). brix serves a standard **Streamable HTTP** MCP endpoint from the same HTTP service:
 
 ```bash
-BRIX_TOKEN=<your-secret> npm run mcp
-# brix-mcp running on stdio
+BRIX_TOKEN=<your-secret> npm run serve
+# MCP endpoint: http://127.0.0.1:9233/mcp
 ```
 
-stdio transport. It reuses brix's env: `BRIX_TOKEN` is required; `BRIX_API_URL` can point to a remote brix (otherwise derived from `BRIX_HTTP_HOST/PORT` locally).
+The MCP endpoint is `POST/GET/DELETE /mcp` and reuses brix HTTP auth: clients must send `Authorization: Bearer <token>` or `X-Brix-Token: <token>`. Internally `/mcp` still calls the brix HTTP API; `BRIX_API_URL` can point to a remote brix (otherwise derived from `BRIX_HTTP_HOST/PORT` locally).
 
-Configure it in your MCP client (Claude Desktop's `mcpServers` as an example):
+Configure the URL in an MCP client that supports Streamable HTTP:
 
 ```json
 {
-  "mcpServers": {
-    "brix": {
-      "command": "npx",
-      "args": ["tsx", "scripts/mcp.ts"],
-      "cwd": "/abs/path/to/brix",
-      "env": { "BRIX_TOKEN": "<your-secret>", "BRIX_API_URL": "http://127.0.0.1:9233" }
-    }
+  "url": "http://127.0.0.1:9233/mcp",
+  "headers": {
+    "Authorization": "Bearer <your-secret>"
   }
 }
 ```
@@ -232,40 +228,42 @@ Typical flow: `session_open` → repeatedly `browser_snapshot`/`browser_click`/�
 
 ## Writing a custom script
 
-Convention:
+Default convention (`.js` / brix-api):
 
-```ts
-// scripts/my-thing.ts
-import type { Page } from 'patchright';
-import type { Run } from '../src/runs/run.js';
-
+```js
 export const meta = {
   description: '...',
   argsExample: { foo: 'bar' },
 };
 
-export async function runInSession(page: Page, args: unknown, run: Run): Promise<unknown> {
-  // operate on page; persist artifacts via run.writeArtifact / run.saveDownload
-  await page.goto('https://example.com');
-  await run.writeArtifact('result.json', JSON.stringify({ title: await page.title() }));
-  return { title: await page.title() };
+export async function runInSession(brix) {
+  await brix.goto('https://example.com');
+  const title = await brix.title();
+  await brix.writeArtifact('result.json', JSON.stringify({ title }));
+  return { title, args: brix.args };
 }
 ```
 
-The `Run` interface:
+`brix` is the restricted browser/artifact API; it does not expose raw `page` / `run` handles. Common methods:
 
 ```ts
-interface Run {
-  runId: string;
-  dir: string;            // <DATA_DIR>/runs/<runId>/ script-private, not over HTTP
-  downloadsDir: string;   // <DATA_DIR>/runs/<runId>/downloads/ served via HTTP /runs/:id/files
-  saveDownload(d: Download, name?: string): Promise<DownloadedFile>;
-  writeArtifact(name: string, data: Buffer | string): Promise<string>;
-  listDownloads(): Promise<DownloadedFile[]>;
+interface BrixScriptApi {
+  readonly args: unknown;
+  goto(url: string, opts?: { waitUntil?: 'load' | 'domcontentloaded' | 'networkidle'; timeout?: number }): Promise<void>;
+  snapshot(opts?: { scope?: string; interactiveOnly?: boolean; maxDepth?: number }): Promise<{ text: string; refCount: number }>;
+  click(target: string, opts?: { timeout?: number; optional?: boolean }): Promise<void>;
+  fill(target: string, value: string): Promise<void>;
+  type(target: string, value: string, opts?: { delay?: number }): Promise<void>;
+  press(key: string): Promise<void>;
+  evalInPage<T = unknown>(source: string): Promise<T>;
+  title(): Promise<string>;
+  text(selector: string): Promise<string>;
+  screenshot(opts?: { fullPage?: boolean }): Promise<Buffer>;
+  writeArtifact(name: string, data: Buffer | string): Promise<void>;
 }
 ```
 
-Write it via `PUT /scripts/my-thing`, then call it via `POST /sessions/:sid/scripts/my-thing`.
+Write it via `PUT /scripts/my-thing`, then call it via `POST /sessions/:sid/scripts/my-thing`. Only pass `language:"ts"` when you truly need the legacy path; that signature is `runInSession(page, args, run)`.
 
 ## Development
 
@@ -275,7 +273,7 @@ npm test            # node:test via tsx, unit + integration (incl. MCP server wi
 npm run e2e         # real-Chrome end-to-end, needs a local Chrome; CI runs it under ubuntu + xvfb
 ```
 
-`npm test` covers the pure-logic units of `src/runs/*`, the session helpers of `src/sessions/*` (ref/lock/trace), the full HTTP route integration of `src/server/*` (auth matrix / scripts CRUD / files CRUD / actions contract / error shapes), and `src/mcp/*` (the real MCP server driven through an in-memory client with stubbed fetch as a fake brix). All without Chrome, so it's fast and stable.
+`npm test` covers the pure-logic units of `src/runs/*`, the session helpers of `src/sessions/*` (ref/lock/trace), the full HTTP route integration of `src/server/*` (auth matrix / scripts CRUD / files CRUD / actions contract / MCP HTTP endpoint / error shapes), and `src/mcp/*` (the real MCP server driven through both an in-memory client and a Streamable HTTP client, with stubbed fetch as a fake brix where needed). All without Chrome, so it's fast and stable.
 
 `npm run e2e` runs the full chain: spawn a real `tsx scripts/serve.ts` child → launch real Chrome → run snapshot/download/interactive-action flows against a local fixture page → verify `/sessions` `/actions` `/runs/:id/files`. It auto-closes the spawned Chrome on teardown. GitHub Actions (`.github/workflows/e2e.yml`) runs it on every push/PR to main/master.
 
@@ -285,7 +283,6 @@ npm run e2e         # real-Chrome end-to-end, needs a local Chrome; CI runs it u
 brix/
 ├── scripts/                  CLI entries + built-in scripts
 │   ├── serve.ts              HTTP service entry
-│   ├── mcp.ts                MCP server entry (stdio)
 │   ├── gemini-draw.ts        built-in script (CLI client)
 │   ├── chatgpt-draw.ts
 │   ├── google-lens.ts
@@ -297,7 +294,7 @@ brix/
 │   ├── runs/                 Run abstraction (id/mime/cli/run)
 │   ├── scripts/              script CRUD (registry) + BrixScriptApi
 │   ├── sessions/             session registry (in-memory Map) + ref/run/lock/trace
-│   ├── server/               HTTP service (http + auth + util + routes/, incl. actions)
+│   ├── server/               HTTP service (http + auth + util + routes/, incl. actions + mcp)
 │   ├── mcp/                  MCP server (server + client)
 │   └── utils/                logger
 └── docs/

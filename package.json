@@ -40,7 +40,6 @@
     "gemini-draw": "tsx scripts/gemini-draw.ts",
     "chatgpt-draw": "tsx scripts/chatgpt-draw.ts",
     "serve": "tsx scripts/serve.ts",
-    "mcp": "tsx scripts/mcp.ts",
     "open-profile": "tsx scripts/open-profile.ts",
     "test": "tsx --test src/**/*.test.ts",
     "e2e": "tsx --test --test-concurrency=1 --test-force-exit test/e2e/**/*.test.ts",

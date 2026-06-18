@@ -5,6 +5,7 @@
 //   /scripts/...                             需要 token
 //   /runs/.../files...                       需要 token
 //   /sessions/...                            需要 token
+//   /mcp                                     需要 token，标准 MCP Streamable HTTP endpoint
 
 import { createServer as createHttpServer, type Server } from 'node:http';
 import { URL } from 'node:url';
@@ -12,6 +13,7 @@ import { getEnv } from '../config.js';
 import { createLogger } from '../utils/logger.js';
 import { checkAuth } from './auth.js';
 import { handleFiles } from './routes/files.js';
+import { handleMcp } from './routes/mcp.js';
 import { handleScripts } from './routes/scripts.js';
 import { handleSessions } from './routes/sessions.js';
 import { sendError, sendJson } from './util.js';
@@ -59,6 +61,9 @@ export function createServer(): Server {
       }
       if (pathname === '/sessions' || pathname.startsWith('/sessions/')) {
         if (await handleSessions(req, res, pathname)) return;
+      }
+      if (pathname === '/mcp') {
+        if (await handleMcp(req, res, pathname)) return;
       }
 
       sendError(res, 404, 'not_found');
