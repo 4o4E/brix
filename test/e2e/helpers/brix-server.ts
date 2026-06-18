@@ -4,12 +4,13 @@
 //
 // On stop():
 //   - SIGKILL the brix server child (it owns the http listener)
-//   - Best-effort kill the Chrome process tree it spawned. Chrome is launched
+//   - Kill the Chrome process tree it spawned. Chrome is launched
 //     `detached: true, stdio: 'ignore'` from src/browser/launcher.ts so it is
-//     NOT a child of `tsx`. We can't reach it by pid via the parent. The cheap
-//     reliable cleanup is: use a distinct CDP port + a distinct user-data-dir
-//     per spawn — even if the Chrome instance lingers a few seconds, it
-//     cannot collide with the next spawn.
+//     NOT a child of `tsx` — killing the server doesn't reach it. We match it
+//     by its unique `--user-data-dir=<scratch>` cmdline and kill it directly
+//     (see killChromeByUserDataDir): taskkill on Windows, pkill on Linux/CI.
+//     Distinct CDP port + user-data-dir per spawn is the backstop so a slow
+//     kill can't collide with the next spawn.
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
 import type { Readable } from 'node:stream';
@@ -201,20 +202,33 @@ function raceTimeout<T>(p: Promise<T>, ms: number): Promise<T | void> {
 }
 
 /**
- * Best-effort kill of any process whose cmdline contains userDataDir.
- * Targets the orphan Chrome that launcher.ts started with detached:true
- * (and thus survived `child.kill` on the brix server child). Linux/macOS
- * only — Windows doesn't run CI.
+ * Best-effort kill of the orphan Chrome that launcher.ts started with
+ * detached:true (so it survived `child.kill` on the brix server child). It
+ * carries `--user-data-dir=<userDataDir>`, which is unique per spawn, so we
+ * match on that. SIGKILL/`/F` — we don't care about graceful shutdown, only
+ * that no window lingers and nothing fights over the port / fds / files.
  *
- * pkill -KILL -f matches the pattern against the full cmdline AND signals
- * everything that matches, which is better than pgrep+process.kill because
- * Chrome spawns zygote/renderer/GPU helpers — many of which also carry
- * `--user-data-dir=<path>` and need cleaning up. SIGKILL (not SIGTERM)
- * because we don't care about graceful shutdown, only that the next
- * spawn isn't fighting over xvfb / RAM / fds.
+ * Windows: `npm run e2e` runs on the dev's desktop, so a lingering Chrome
+ * leaves a visible window AND holds user-data-dir handles open (wedging the
+ * later fs.rm). Mirror launcher.ts: PowerShell finds chrome.exe by cmdline,
+ * `taskkill /T` kills it plus its renderer/GPU children.
+ *
+ * Linux/macOS (CI): `pkill -KILL -f` matches the full cmdline and signals
+ * every matching process (Chrome's zygote/renderer/GPU helpers all carry
+ * `--user-data-dir=<path>`).
  */
 function killChromeByUserDataDir(userDataDir: string): void {
-  if (process.platform === 'win32') return;
+  if (process.platform === 'win32') {
+    try {
+      const escaped = userDataDir.replace(/'/g, "''");
+      const ps = `$d='${escaped}'; Get-CimInstance Win32_Process -Filter "Name='chrome.exe'" | ` +
+        `Where-Object { $_.CommandLine -like "*$d*" } | ForEach-Object { $_.ProcessId }`;
+      const r = spawnSync('powershell.exe', ['-NoProfile', '-NonInteractive', '-Command', ps], { encoding: 'utf-8', timeout: 5000 });
+      const pids = (r.stdout ?? '').split(/\r?\n/).map((s) => s.trim()).filter(Boolean);
+      for (const pid of pids) spawnSync('taskkill', ['/F', '/T', '/PID', pid], { timeout: 5000 });
+    } catch { /* best-effort */ }
+    return;
+  }
   try {
     spawnSync('pkill', ['-KILL', '-f', userDataDir], { encoding: 'utf-8', timeout: 5000 });
   } catch { /* pkill not present */ }
