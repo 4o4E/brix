@@ -1,6 +1,7 @@
 // registry 纯逻辑单测：会话作用域 helper（不起 Chrome）。
 //   - getSessionRefContext 返回稳定实例
 //   - withSessionLock 串行化并发，且前序失败不阻断后续
+//   - session idle 超时判断不影响执行中的操作
 //   - appendTrace 封顶丢最旧
 
 import { setupTestEnv } from '../server/test-helpers.js';
@@ -9,7 +10,14 @@ setupTestEnv('registry');
 
 import { test } from 'node:test';
 import { strict as assert } from 'node:assert';
-import { getSessionRefContext, withSessionLock, appendTrace, type BrixSession } from './registry.js';
+import {
+  getSessionRefContext,
+  withSessionLock,
+  appendTrace,
+  getSessionIdleTimeoutMs,
+  isBrixSessionIdleExpired,
+  type BrixSession,
+} from './registry.js';
 
 function fakeSession(): BrixSession {
   return { sessionId: 's', page: {} as never, createdAt: 0, lastActiveAt: 0 };
@@ -42,6 +50,24 @@ test('withSessionLock: 前序失败不阻断后续，调用方拿到各自结果
   await assert.rejects(() => withSessionLock(s, async () => { throw new Error('boom'); }));
   const v = await withSessionLock(s, async () => 42);
   assert.equal(v, 42);
+});
+
+test('session idle: 默认 15 分钟无操作后过期', () => {
+  const timeoutMs = getSessionIdleTimeoutMs();
+  assert.equal(timeoutMs, 15 * 60 * 1000);
+
+  const now = 1_000_000_000;
+  const s = { ...fakeSession(), lastActiveAt: now - timeoutMs };
+  assert.equal(isBrixSessionIdleExpired(s, now), true);
+  s.lastActiveAt = now - timeoutMs + 1;
+  assert.equal(isBrixSessionIdleExpired(s, now), false);
+});
+
+test('session idle: 执行中或排队中的操作不触发过期', () => {
+  const timeoutMs = getSessionIdleTimeoutMs();
+  const now = 1_000_000_000;
+  const s = { ...fakeSession(), lastActiveAt: now - timeoutMs - 1, activeOperations: 1 };
+  assert.equal(isBrixSessionIdleExpired(s, now), false);
 });
 
 test('appendTrace: 封顶 200，丢最旧', () => {

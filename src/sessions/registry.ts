@@ -9,6 +9,7 @@ import { nextId } from '../runs/id.js';
 import { createLogger } from '../utils/logger.js';
 import { createBrowserRefContext, type BrowserRefContext } from '../browser/snapshot.js';
 import { createRun, type Run } from '../runs/run.js';
+import { getEnv } from '../config.js';
 
 const log = createLogger('sessions');
 
@@ -35,11 +36,57 @@ export interface BrixSession {
   interactiveRun?: Run;
   /** 单 session 串行锁（promise 链尾）。 */
   actionLock?: Promise<unknown>;
+  /** 正在运行或排队的脚本/动作数量；非 0 时不做 idle 回收。 */
+  activeOperations?: number;
+  /** 本 session 的无操作自动关闭定时器。 */
+  idleTimer?: ReturnType<typeof setTimeout>;
   /** 动作轨迹（封顶 TRACE_CAP 条，超出丢最旧）。 */
   trace?: ActionTraceEntry[];
 }
 
 const sessions = new Map<string, BrixSession>();
+
+export function getSessionIdleTimeoutMs(): number {
+  const minutes = getEnv().SESSION_IDLE_TIMEOUT_MIN;
+  return minutes > 0 ? minutes * 60 * 1000 : 0;
+}
+
+export function isBrixSessionIdleExpired(s: BrixSession, now = Date.now()): boolean {
+  const timeoutMs = getSessionIdleTimeoutMs();
+  return timeoutMs > 0 && (s.activeOperations ?? 0) === 0 && now - s.lastActiveAt >= timeoutMs;
+}
+
+function clearSessionIdleTimer(s: BrixSession): void {
+  if (!s.idleTimer) return;
+  clearTimeout(s.idleTimer);
+  s.idleTimer = undefined;
+}
+
+function scheduleSessionIdleClose(s: BrixSession): void {
+  clearSessionIdleTimer(s);
+  const timeoutMs = getSessionIdleTimeoutMs();
+  if (timeoutMs <= 0 || (s.activeOperations ?? 0) > 0) return;
+
+  const remainingMs = Math.max(1, timeoutMs - (Date.now() - s.lastActiveAt));
+  s.idleTimer = setTimeout(() => {
+    if (sessions.get(s.sessionId) !== s) return;
+    if (!isBrixSessionIdleExpired(s)) {
+      scheduleSessionIdleClose(s);
+      return;
+    }
+    log.info(`session ${s.sessionId} idle timeout, auto closing`);
+    void closeBrixSession(s.sessionId);
+  }, remainingMs);
+  s.idleTimer.unref?.();
+}
+
+function removeBrixSession(sessionId: string): BrixSession | null {
+  const s = sessions.get(sessionId);
+  if (!s) return null;
+  sessions.delete(sessionId);
+  clearSessionIdleTimer(s);
+  return s;
+}
 
 export async function createBrixSession(url?: string): Promise<BrixSession> {
   const page = await newTab(url);
@@ -47,9 +94,10 @@ export async function createBrixSession(url?: string): Promise<BrixSession> {
   const now = Date.now();
   const s: BrixSession = { sessionId, page, createdAt: now, lastActiveAt: now };
   sessions.set(sessionId, s);
+  scheduleSessionIdleClose(s);
   log.info(`created session ${sessionId} url=${url ?? '(blank)'}`);
   page.on('close', () => {
-    if (sessions.delete(sessionId)) log.info(`session ${sessionId} auto-removed (page closed)`);
+    if (removeBrixSession(sessionId)) log.info(`session ${sessionId} auto-removed (page closed)`);
   });
   return s;
 }
@@ -60,7 +108,9 @@ export function getBrixSession(sessionId: string): BrixSession | null {
 
 export function touchBrixSession(sessionId: string): void {
   const s = sessions.get(sessionId);
-  if (s) s.lastActiveAt = Date.now();
+  if (!s) return;
+  s.lastActiveAt = Date.now();
+  scheduleSessionIdleClose(s);
 }
 
 export function listBrixSessions(): Array<{ sessionId: string; url: string; createdAt: number; lastActiveAt: number }> {
@@ -77,9 +127,8 @@ function safeUrl(page: Page): string {
 }
 
 export async function closeBrixSession(sessionId: string): Promise<boolean> {
-  const s = sessions.get(sessionId);
+  const s = removeBrixSession(sessionId);
   if (!s) return false;
-  sessions.delete(sessionId);
   await s.page.close().catch(() => { /* ignore */ });
   log.info(`closed session ${sessionId}`);
   return true;
@@ -106,8 +155,16 @@ export async function getInteractiveRun(s: BrixSession, debug?: boolean): Promis
  * 不编码任何人工接管策略 —— 人何时介入由调用方编排。
  */
 export function withSessionLock<T>(s: BrixSession, fn: () => Promise<T>): Promise<T> {
+  s.activeOperations = (s.activeOperations ?? 0) + 1;
+  clearSessionIdleTimer(s);
   const prev = s.actionLock ?? Promise.resolve();
-  const next = prev.catch(() => { /* 前序失败不阻断后续 */ }).then(fn);
+  const next = prev.catch(() => { /* 前序失败不阻断后续 */ }).then(fn).finally(() => {
+    s.activeOperations = Math.max(0, (s.activeOperations ?? 1) - 1);
+    if (sessions.get(s.sessionId) === s && s.activeOperations === 0) {
+      s.lastActiveAt = Date.now();
+      scheduleSessionIdleClose(s);
+    }
+  });
   s.actionLock = next.catch(() => { /* 存一个永不 reject 的尾 */ });
   return next;
 }

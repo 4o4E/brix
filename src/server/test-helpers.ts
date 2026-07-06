@@ -43,6 +43,7 @@ export function setupTestEnv(label: string): TestDirs {
   process.env.BRIX_SCRIPTS_DIR = scriptsDir;
   process.env.BRIX_USER_DATA_DIR = userDataDir;
   process.env.BRIX_LOG_LEVEL = 'error';
+  process.env.BRIX_SESSION_IDLE_TIMEOUT_MIN = '15';
 
   return {
     dataDir: process.env.BRIX_DATA_DIR!,

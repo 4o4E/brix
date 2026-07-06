@@ -83,6 +83,7 @@ npm run gemini-draw -- --json-args '{"prompt":"draw a cat"}'
 | `BRIX_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `BRIX_DEBUG_ARTIFACTS` | `false` (implicit `true` when `LOG_LEVEL=debug`) | whether to persist debug artifacts (`stage-*.png/html`, result-page `page.png/html`); when off only `result.json` + `downloads/` remain. Per-request override via body `debug` |
 | `BRIX_IDLE_TIMEOUT_MIN` | `30` | minutes idle before disconnecting Playwright (Chrome stays up), 0 = no timeout |
+| `BRIX_SESSION_IDLE_TIMEOUT_MIN` | `15` | minutes a session can stay idle before its tab is closed; running/queued scripts and actions are not idle, 0 = no timeout |
 | `BRIX_DOWNLOAD_DIR` / `BRIX_CACHE_DIR` / `BRIX_CRASH_DIR` | `<DATA_DIR>/...` | various Chrome-internal dirs |
 | `BRIX_SNAPSHOT_MAX_CHARS` | `16000` | max chars of snapshot text |
 
@@ -98,7 +99,7 @@ Unified errors: `400 bad_request` / `403 forbidden` / `404 not_found` / `500 int
 
 ### Sessions (execution entry)
 
-All script/primitive execution happens inside a session's tab.
+All script/primitive execution happens inside a session's tab. By default, a session idle for 15 minutes has its tab closed automatically; tune this with `BRIX_SESSION_IDLE_TIMEOUT_MIN`. Running or queued scripts/actions are not treated as idle.
 
 | Method | Path | Body | Response |
 |---|---|---|---|

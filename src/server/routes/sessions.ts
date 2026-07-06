@@ -144,6 +144,7 @@ export async function handleSessions(req: IncomingMessage, res: ServerResponse, 
     const sid = decodeURIComponent(traceMatch[1]);
     const session = getBrixSession(sid);
     if (!session) { sendError(res, 404, 'not_found', 'session'); return true; }
+    touchBrixSession(sid);
     sendJson(res, 200, { trace: session.trace ?? [] });
     return true;
   }

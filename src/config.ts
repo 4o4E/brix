@@ -41,6 +41,8 @@ export interface EnvConfig {
   DEBUG_ARTIFACTS: boolean;
   /** 空闲多少分钟后自动断开 Playwright 连接（不关 Chrome 进程），0 = 不超时 */
   IDLE_TIMEOUT_MIN: number;
+  /** session 无操作多少分钟后自动关闭对应 tab，0 = 不超时 */
+  SESSION_IDLE_TIMEOUT_MIN: number;
   /** snapshot 文本最大字符数 */
   SNAPSHOT_MAX_CHARS: number;
   /** HTTP 服务鉴权 token；server 启动前必须非空，否则拒启 */
@@ -143,6 +145,7 @@ export function getEnv(): EnvConfig {
     LOG_LEVEL: levelEnv('BRIX_LOG_LEVEL', 'info'),
     DEBUG_ARTIFACTS: boolEnv('BRIX_DEBUG_ARTIFACTS', levelEnv('BRIX_LOG_LEVEL', 'info') === 'debug'),
     IDLE_TIMEOUT_MIN: intEnv('BRIX_IDLE_TIMEOUT_MIN', 30),
+    SESSION_IDLE_TIMEOUT_MIN: intEnv('BRIX_SESSION_IDLE_TIMEOUT_MIN', 15),
     SNAPSHOT_MAX_CHARS: intEnv('BRIX_SNAPSHOT_MAX_CHARS', 16000),
     HTTP_TOKEN: process.env.BRIX_TOKEN?.trim() || null,
     HTTP_HOST: process.env.BRIX_HTTP_HOST?.trim() || '0.0.0.0',

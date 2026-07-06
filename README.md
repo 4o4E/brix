@@ -85,6 +85,7 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 | `BRIX_LOG_LEVEL` | `info` | `debug` \| `info` \| `warn` \| `error` |
 | `BRIX_DEBUG_ARTIFACTS` | `false`（`LOG_LEVEL=debug` 时隐式 `true`） | 是否落盘调试产物（`stage-*.png/html`、结果页 `page.png/html`）；关时只留 `result.json` + `downloads/`。单次请求可用 body `debug` 覆盖 |
 | `BRIX_IDLE_TIMEOUT_MIN` | `30` | 空闲多少分钟后断开 Playwright（不关 Chrome），0 = 不超时 |
+| `BRIX_SESSION_IDLE_TIMEOUT_MIN` | `15` | session 无操作多少分钟后自动关闭对应 tab；脚本/动作执行中不计为空闲，0 = 不超时 |
 | `BRIX_DOWNLOAD_DIR` / `BRIX_CACHE_DIR` / `BRIX_CRASH_DIR` | `<DATA_DIR>/...` | 各类 Chrome 内部目录 |
 | `BRIX_SNAPSHOT_MAX_CHARS` | `16000` | snapshot 文本最大字符数 |
 
@@ -100,7 +101,7 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 
 ### 会话（执行入口）
 
-所有脚本执行都在某个 session 的 tab 里发生。
+所有脚本执行都在某个 session 的 tab 里发生。session 默认 15 分钟无操作后自动关闭对应 tab，可用 `BRIX_SESSION_IDLE_TIMEOUT_MIN` 调整；正在执行或排队中的脚本/动作不会被当作空闲回收。
 
 | Method | Path | Body | 响应 |
 |---|---|---|---|
