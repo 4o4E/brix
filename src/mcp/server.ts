@@ -283,6 +283,19 @@ content 返回整页 HTML（可能很大，已截断）。`,
     annotations: RO,
   }, async ({ sessionId, fullPage }) => guard(() => runAction(sessionId, { op: 'screenshot', fullPage })));
 
+  server.registerTool('browser_cookies', {
+    title: 'Get cookies',
+    description: `读取浏览器上下文 Cookie，包含页面 JS document.cookie 读不到的 HttpOnly cookie。
+默认读取当前 http(s) 页面匹配的 Cookie；传 url 或 urls 可读取指定站点；传 all=true 可导出当前 profile 下全部 Cookie。`,
+    inputSchema: {
+      sessionId: sid,
+      url: z.string().min(1).optional().describe('只读取匹配该 URL 的 Cookie（可选）'),
+      urls: z.array(z.string().min(1)).min(1).optional().describe('只读取匹配这些 URL 的 Cookie（可选）'),
+      all: z.boolean().optional().describe('读取全部 Cookie；未设置时默认只读当前页面匹配项'),
+    },
+    annotations: RO,
+  }, async ({ sessionId, url, urls, all }) => guard(() => runAction(sessionId, { op: 'cookies', url, urls, all })));
+
   server.registerTool('browser_action', {
     title: 'Raw action (escape hatch)',
     description: `透传任意 action op 到 brix /actions —— 当上面具名 tool 没覆盖到某个 op，或要传新参数时用。

@@ -88,13 +88,22 @@ describe('brix /actions interactive primitives e2e', () => {
       assert.equal(shot.status, 200);
       assert.ok(typeof shot.json.result?.base64 === 'string' && shot.json.result.base64.length > 100, '截图应返回 base64');
 
+      // Cookie 读取走浏览器上下文，能拿到页面 JS document.cookie 读不到的 HttpOnly cookie。
+      const cookies = await action(sessionId, { op: 'cookies' });
+      assert.equal(cookies.status, 200, `cookies 应成功: ${JSON.stringify(cookies.json)}`);
+      assert.ok(
+        cookies.json.result.some((c: any) => c.name === 'fixture_http_only' && c.value === 'secret' && c.httpOnly === true),
+        `应读到 HttpOnly cookie: ${JSON.stringify(cookies.json.result)}`,
+      );
+
       // trace 端点：记录了上面的成功动作
       const traceRes = await fetch(`${brix.baseUrl}/sessions/${sessionId}/trace`, { headers: authed() });
       assert.equal(traceRes.status, 200);
       const { trace } = (await traceRes.json()) as { trace: Array<{ op: string; ok: boolean }> };
       const ops = trace.map((t) => t.op);
-      assert.ok(ops.includes('snapshot') && ops.includes('click') && ops.includes('fill'), `trace 应含已执行 op: ${ops.join(',')}`);
+      assert.ok(ops.includes('snapshot') && ops.includes('click') && ops.includes('fill') && ops.includes('cookies'), `trace 应含已执行 op: ${ops.join(',')}`);
       assert.ok(trace.every((t) => t.ok), 'trace 全部成功');
+      assert.ok(!JSON.stringify(trace).includes('secret'), 'trace 不应记录 cookie 值');
     } finally {
       await fetch(`${brix.baseUrl}/sessions/${sessionId}`, { method: 'DELETE', headers: authed() }).catch(() => { /* ignore */ });
     }

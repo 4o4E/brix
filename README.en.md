@@ -132,6 +132,7 @@ The other execution mode besides whole scripts: send one browser primitive at a 
 | `waitForSelector` / `waitForLoad` / `waitForUrl` | … | wait for a condition |
 | `text` / `attr` / `count` / `content` / `url` / `title` | `selector?` | read page info |
 | `screenshot` | `fullPage?` | screenshot (returns base64) |
+| `cookies` | `url?`, `urls?`, `all?` | read browser-context cookies, including HttpOnly cookies that page JS cannot read |
 
 Passing `returnSnapshot:true` on a mutating op also returns the refreshed snapshot (with new refs). `/trace` returns the sequence of successful actions you ran on that session, to review and **crystallize into a script** — brix only gives the trace; the script is written by you/the LLM per the convention below, never auto-generated.
 
@@ -205,10 +206,10 @@ Configure the URL in an MCP client that supports Streamable HTTP:
 }
 ```
 
-Exposed tools (26):
+Exposed tools (27):
 
 - **Sessions**: `session_open` / `session_list` / `session_close` / `session_trace`
-- **Primitives**: `browser_navigate` / `browser_snapshot` / `browser_click` (with `expectDownload`) / `browser_fill` / `browser_type` / `browser_press` / `browser_select` / `browser_hover` / `browser_scroll` / `browser_upload` / `browser_eval` / `browser_wait` / `browser_read` / `browser_screenshot` (returns an image block)
+- **Primitives**: `browser_navigate` / `browser_snapshot` / `browser_click` (with `expectDownload`) / `browser_fill` / `browser_type` / `browser_press` / `browser_select` / `browser_hover` / `browser_scroll` / `browser_upload` / `browser_eval` / `browser_wait` / `browser_read` / `browser_screenshot` (returns an image block) / `browser_cookies` (including HttpOnly cookies)
 - **Escape hatch**: `browser_action` (passes through any `op`)
 - **Scripts**: `script_list` / `script_get` / `script_save` (crystallize) / `script_delete` / `script_run` (produce)
 - **Artifacts**: `run_files_list` / `run_file_get` (images returned as image blocks)

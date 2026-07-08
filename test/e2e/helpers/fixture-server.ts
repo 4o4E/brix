@@ -30,6 +30,7 @@ export async function startFixtureServer(): Promise<FixtureServer> {
       res.writeHead(200, {
         'Content-Type': 'text/html; charset=utf-8',
         'Content-Length': indexHtml.length,
+        'Set-Cookie': 'fixture_http_only=secret; Path=/; HttpOnly; SameSite=Lax',
       });
       res.end(indexHtml);
       return;

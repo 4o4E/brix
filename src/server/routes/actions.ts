@@ -50,6 +50,25 @@ function optBool(body: Body, key: string): boolean | undefined {
   return typeof v === 'boolean' ? v : undefined;
 }
 
+function cookieUrls(body: Body, currentUrl: string): string | string[] | undefined {
+  if (optBool(body, 'all')) return undefined;
+
+  const rawUrls = body.urls;
+  if (Array.isArray(rawUrls)) {
+    if (rawUrls.length > 0 && rawUrls.every((u) => typeof u === 'string' && u.length > 0)) return rawUrls;
+    throw new BadActionError('urls 必须是非空字符串数组');
+  }
+
+  const rawUrl = body.url;
+  if (typeof rawUrl === 'string' && rawUrl.length > 0) return rawUrl;
+  if (rawUrl !== undefined) throw new BadActionError('url 必须是非空字符串');
+  if (rawUrls !== undefined) throw new BadActionError('urls 必须是非空字符串数组');
+
+  // 默认只取当前 http(s) 页面匹配的 cookie，避免在空白页意外导出全 profile。
+  if (/^https?:\/\//i.test(currentUrl)) return currentUrl;
+  return [];
+}
+
 /** 轨迹参数摘要：去掉控制字段与文件字节，避免把 base64 大图塞进 trace。 */
 function sanitizeParams(body: Body): Record<string, unknown> {
   const out: Record<string, unknown> = {};
@@ -70,6 +89,11 @@ function summarize(result: unknown): string | undefined {
     const s = JSON.stringify(result);
     return s.length > 120 ? `${s.slice(0, 120)}…` : s;
   } catch { return undefined; }
+}
+
+function summarizeCookies(result: unknown): string | undefined {
+  if (!Array.isArray(result)) return summarize(result);
+  return `${result.length} cookies`;
 }
 
 /**
@@ -184,6 +208,13 @@ export async function executeAction(session: BrixSession, body: Body): Promise<A
         result = { base64: png.toString('base64'), mimeType: 'image/png' };
         break;
       }
+      case 'cookies':
+        // 通过浏览器上下文读取 Cookie，可拿到 document.cookie 读不到的 HttpOnly cookie。
+        {
+          const urls = cookieUrls(body, session.page.url());
+          result = Array.isArray(urls) && urls.length === 0 ? [] : await session.page.context().cookies(urls);
+        }
+        break;
       default:
         throw new BadActionError(`未知 op: ${op}`);
     }
@@ -202,7 +233,7 @@ export async function executeAction(session: BrixSession, body: Body): Promise<A
     throw e;
   }
 
-  const okSummary = op === 'screenshot' ? '[png]' : op === 'snapshot' ? `refs=${snapshot?.refCount ?? 0}` : summarize(result);
+  const okSummary = op === 'screenshot' ? '[png]' : op === 'snapshot' ? `refs=${snapshot?.refCount ?? 0}` : op === 'cookies' ? summarizeCookies(result) : summarize(result);
   appendTrace(session, { ts: Date.now(), op, params: sanitizeParams(body), ok: true, resultSummary: okSummary });
 
   return { runId: run.runId, op, result, snapshot, downloads };

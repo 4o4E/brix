@@ -134,6 +134,7 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 | `waitForSelector` / `waitForLoad` / `waitForUrl` | … | 等待条件 |
 | `text` / `attr` / `count` / `content` / `url` / `title` | `selector?` | 读取页面信息 |
 | `screenshot` | `fullPage?` | 截图（返回 base64） |
+| `cookies` | `url?`, `urls?`, `all?` | 读取浏览器上下文 Cookie（含 JS 读不到的 HttpOnly cookie） |
 
 变更类 op 传 `returnSnapshot:true` 会顺带返回刷新后的快照（含新 refs）。`/trace` 返回你在该 session 上跑过的成功动作序列，便于回看并**固化成脚本**——brix 只给轨迹，脚本由你/LLM 按下文约定编写，不自动生成。
 
@@ -207,10 +208,10 @@ MCP endpoint 是 `POST/GET/DELETE /mcp`，复用 brix HTTP 鉴权：客户端需
 }
 ```
 
-暴露的 tool（26 个）：
+暴露的 tool（27 个）：
 
 - **会话**：`session_open` / `session_list` / `session_close` / `session_trace`
-- **交互原语**：`browser_navigate` / `browser_snapshot` / `browser_click`（含 `expectDownload`）/ `browser_fill` / `browser_type` / `browser_press` / `browser_select` / `browser_hover` / `browser_scroll` / `browser_upload` / `browser_eval` / `browser_wait` / `browser_read` / `browser_screenshot`（回图块）
+- **交互原语**：`browser_navigate` / `browser_snapshot` / `browser_click`（含 `expectDownload`）/ `browser_fill` / `browser_type` / `browser_press` / `browser_select` / `browser_hover` / `browser_scroll` / `browser_upload` / `browser_eval` / `browser_wait` / `browser_read` / `browser_screenshot`（回图块）/ `browser_cookies`（含 HttpOnly cookie）
 - **逃生口**：`browser_action`（透传任意 `op`）
 - **脚本**：`script_list` / `script_get` / `script_save`（固化）/ `script_delete` / `script_run`（生产）
 - **产物**：`run_files_list` / `run_file_get`（图片回图块）

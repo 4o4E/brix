@@ -33,9 +33,10 @@ test('标准 Streamable HTTP MCP client 可连接 /mcp 并列出 tools', async (
   try {
     assert.ok(transport.sessionId, 'HTTP MCP 初始化后应返回 mcp-session-id');
     const { tools } = await client.listTools();
-    assert.equal(tools.length, 26);
+    assert.equal(tools.length, 27);
     assert.ok(tools.some((t) => t.name === 'session_open'));
     assert.ok(tools.some((t) => t.name === 'browser_snapshot'));
+    assert.ok(tools.some((t) => t.name === 'browser_cookies'));
     assert.ok(tools.some((t) => t.name === 'run_file_get'));
   } finally {
     await client.close();

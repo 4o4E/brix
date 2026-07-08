@@ -78,3 +78,50 @@ test('executeAction: navigate 缺 url → BadActionError', async () => {
 test('executeAction: click 缺 target → BadActionError', async () => {
   await assert.rejects(() => executeAction(fakeSession(), { op: 'click' }), (e) => e instanceof BadActionError);
 });
+
+test('executeAction: cookies 读取浏览器上下文 Cookie 且 trace 不记录值', async () => {
+  let seenUrls: unknown;
+  const session: BrixSession = {
+    sessionId: 'cookie-unit',
+    page: {
+      url: () => 'https://example.com/account',
+      context: () => ({
+        cookies: async (urls: unknown) => {
+          seenUrls = urls;
+          return [{ name: 'sid', value: 'secret', domain: 'example.com', path: '/', httpOnly: true }];
+        },
+      }),
+    } as never,
+    createdAt: 0,
+    lastActiveAt: 0,
+  };
+
+  const r = await executeAction(session, { op: 'cookies' });
+
+  assert.equal(seenUrls, 'https://example.com/account');
+  assert.deepEqual(r.result, [{ name: 'sid', value: 'secret', domain: 'example.com', path: '/', httpOnly: true }]);
+  assert.equal(session.trace?.at(-1)?.resultSummary, '1 cookies');
+});
+
+test('executeAction: cookies 在非 http(s) 当前页默认不导出全量 Cookie', async () => {
+  let called = false;
+  const session: BrixSession = {
+    sessionId: 'blank-cookie-unit',
+    page: {
+      url: () => 'about:blank',
+      context: () => ({
+        cookies: async () => {
+          called = true;
+          return [{ name: 'sid', value: 'secret' }];
+        },
+      }),
+    } as never,
+    createdAt: 0,
+    lastActiveAt: 0,
+  };
+
+  const r = await executeAction(session, { op: 'cookies' });
+
+  assert.equal(called, false);
+  assert.deepEqual(r.result, []);
+});

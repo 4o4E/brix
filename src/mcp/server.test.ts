@@ -59,12 +59,12 @@ async function call(client: Client, name: string, args: Record<string, unknown>)
 
 // ---- tools/list ----
 
-test('tools/list 暴露全部 26 个 tool', async () => {
+test('tools/list 暴露全部 27 个 tool', async () => {
   const client = await connectClient();
   const { tools } = await client.listTools();
-  assert.equal(tools.length, 26);
+  assert.equal(tools.length, 27);
   const names = tools.map((t) => t.name);
-  for (const n of ['session_open', 'browser_snapshot', 'browser_click', 'browser_action', 'script_save', 'run_file_get']) {
+  for (const n of ['session_open', 'browser_snapshot', 'browser_click', 'browser_cookies', 'browser_action', 'script_save', 'run_file_get']) {
     assert.ok(names.includes(n), `缺 tool ${n}`);
   }
   await client.close();
@@ -89,6 +89,17 @@ test('browser_read 把 what 映射成 op', async () => {
   await call(client, 'browser_read', { sessionId: 's1', what: 'text', selector: '#h' });
   assert.equal(captured[0].body && (captured[0].body as any).op, 'text');
   assert.equal((captured[0].body as any).selector, '#h');
+  await client.close();
+});
+
+test('browser_cookies 构造 {op:cookies,url/all} 打到 /sessions/:id/actions', async () => {
+  handler = () => ({ json: { runId: 'r1', op: 'cookies', result: [{ name: 'sid', value: 'v', httpOnly: true }] } });
+  const client = await connectClient();
+  const res = await call(client, 'browser_cookies', { sessionId: 's1', url: 'https://example.com', all: false });
+  assert.equal(captured[0].method, 'POST');
+  assert.equal(captured[0].path, '/sessions/s1/actions');
+  assert.deepEqual(captured[0].body, { op: 'cookies', url: 'https://example.com', all: false });
+  assert.ok(res.content[0].text!.includes('"httpOnly":true'));
   await client.close();
 });
 
