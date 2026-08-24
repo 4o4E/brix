@@ -34,7 +34,7 @@ BRIX_TOKEN=<your-secret> npm run serve
 ```
 
 - `BRIX_TOKEN` is required, otherwise startup fails.
-- `/health` is public; all other endpoints require `Authorization: Bearer <token>` or `X-Brix-Token: <token>`.
+- `/health` and `/mcp/health` are public; all other endpoints require `Authorization: Bearer <token>` or `X-Brix-Token: <token>`.
 - The first request launches the Chrome process (CDP defaults to `--remote-debugging-port=0`, so Chrome picks a free port), kept resident and reused.
 
 ## CLI
@@ -96,6 +96,7 @@ Unified errors: `400 bad_request` / `403 forbidden` / `404 not_found` / `500 int
 | Method | Path | Response |
 |---|---|---|
 | GET | `/health` | `200 {ok:true}` |
+| GET | `/mcp/health` | `200 {ok:true,service:"brix-mcp"}` without creating an MCP session |
 
 ### Sessions (execution entry)
 
@@ -194,6 +195,8 @@ BRIX_TOKEN=<your-secret> npm run serve
 ```
 
 The MCP endpoint is `POST/GET/DELETE /mcp` and reuses brix HTTP auth: clients must send `Authorization: Bearer <token>` or `X-Brix-Token: <token>`. Internally `/mcp` still calls the brix HTTP API; `BRIX_API_URL` can point to a remote brix (otherwise derived from `BRIX_HTTP_HOST/PORT` locally).
+
+Load balancers, container orchestrators, and other service probes can call the public `GET /mcp/health` endpoint. It only checks that the MCP HTTP service can respond; it does not create an MCP session or start Chrome.
 
 Configure the URL in an MCP client that supports Streamable HTTP:
 

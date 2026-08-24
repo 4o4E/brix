@@ -34,7 +34,7 @@ BRIX_TOKEN=<your-secret> npm run serve
 ```
 
 - `BRIX_TOKEN` 必须设置，否则启动失败。
-- `/health` 公开；其余端点需要 `Authorization: Bearer <token>` 或 `X-Brix-Token: <token>`。
+- `/health` 和 `/mcp/health` 公开；其余端点需要 `Authorization: Bearer <token>` 或 `X-Brix-Token: <token>`。
 - 首次请求会拉起 Chrome 进程（默认 CDP `--remote-debugging-port=0` 自动挑空闲端口），常驻复用。
 
 ## CLI
@@ -98,6 +98,7 @@ npm run gemini-draw -- --json-args '{"prompt":"画一只猫"}'
 | Method | Path | 响应 |
 |---|---|---|
 | GET | `/health` | `200 {ok:true}` |
+| GET | `/mcp/health` | `200 {ok:true,service:"brix-mcp"}`，不创建 MCP 会话 |
 
 ### 会话（执行入口）
 
@@ -196,6 +197,8 @@ BRIX_TOKEN=<your-secret> npm run serve
 ```
 
 MCP endpoint 是 `POST/GET/DELETE /mcp`，复用 brix HTTP 鉴权：客户端需要传 `Authorization: Bearer <token>` 或 `X-Brix-Token: <token>`。`/mcp` 内部仍复用 brix 的 HTTP API；`BRIX_API_URL` 可指向远端 brix（否则按 `BRIX_HTTP_HOST/PORT` 推导本机）。
+
+负载均衡器、容器编排平台等服务探针可请求公开的 `GET /mcp/health`。该端点只检查 MCP HTTP 服务是否可响应，不创建 MCP 会话，也不会拉起 Chrome。
 
 在支持 Streamable HTTP 的 MCP 客户端里配置 URL：
 

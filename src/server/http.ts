@@ -1,7 +1,7 @@
 // brix HTTP 服务：listen + 鉴权中间件 + 路由分发
 //
 // 端点划分：
-//   /health                                  公开
+//   /health、/mcp/health                     公开
 //   /scripts/...                             需要 token
 //   /runs/.../files...                       需要 token
 //   /sessions/...                            需要 token
@@ -41,8 +41,10 @@ export function createServer(): Server {
 
     try {
       // 公开端点
-      if (pathname === '/health' && method === 'GET') {
-        sendJson(res, 200, { ok: true });
+      if (method === 'GET' && (pathname === '/health' || pathname === '/mcp/health')) {
+        sendJson(res, 200, pathname === '/mcp/health'
+          ? { ok: true, service: 'brix-mcp' }
+          : { ok: true });
         return;
       }
 

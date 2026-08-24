@@ -21,6 +21,13 @@ after(async () => {
   if (started) await started.close();
 });
 
+test('GET /mcp/health 无需鉴权和 MCP 会话即可检查服务', async () => {
+  const res = await fetch(`${started.baseUrl}/mcp/health`);
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, service: 'brix-mcp' });
+  assert.equal(res.headers.get('mcp-session-id'), null);
+});
+
 test('标准 Streamable HTTP MCP client 可连接 /mcp 并列出 tools', async () => {
   const client = new Client({ name: 'brix-http-test', version: '0' });
   const transport = new StreamableHTTPClientTransport(new URL(`${started.baseUrl}/mcp`), {

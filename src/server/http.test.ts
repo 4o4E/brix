@@ -1,4 +1,4 @@
-// HTTP 集成测试：/health、auth 失败路径、跨路由错误形状一致性、兜底 404、JSON 异常。
+// HTTP 集成测试：健康检查、auth 失败路径、跨路由错误形状一致性、兜底 404、JSON 异常。
 //
 // 这个文件覆盖 server 级别的横切关注点；
 // /scripts、/runs/:id/files 各自的 CRUD 在同目录 *.test.ts 拆分。
@@ -45,6 +45,27 @@ test('GET /health: ignores any token header sent', async () => {
 test('POST /health: method-not-handled falls through to 404', async () => {
   // /health 只在 GET 时短路；其它 method 不被特殊处理 → 进入 auth → 没 token → 403
   const res = await rawFetch(baseUrl, '/health', { method: 'POST' });
+  assert.equal(res.status, 403);
+});
+
+// ---------- /mcp/health ----------
+
+test('GET /mcp/health: public MCP health check, no token required', async () => {
+  const res = await rawFetch(baseUrl, '/mcp/health');
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, service: 'brix-mcp' });
+});
+
+test('GET /mcp/health: ignores invalid token and does not require MCP initialization', async () => {
+  const res = await rawFetch(baseUrl, '/mcp/health', {
+    headers: { Authorization: 'Bearer wrong' },
+  });
+  assert.equal(res.status, 200);
+  assert.deepEqual(await res.json(), { ok: true, service: 'brix-mcp' });
+});
+
+test('POST /mcp/health: remains protected and is not a health check', async () => {
+  const res = await rawFetch(baseUrl, '/mcp/health', { method: 'POST' });
   assert.equal(res.status, 403);
 });
 
