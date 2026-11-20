@@ -331,6 +331,7 @@ body = { op, ...params }。返回同 browser_* 的格式。`,
     description: `把走通的流程固化成脚本（PUT /scripts/:name）。这是探索→固化的落点：你按 brix-api 约定写
 export async function runInSession(brix){...}（用 brix.goto/snapshot/click/fill/... 复现探索步骤），
 存进去后即可 script_run 直接调用。写前 brix 做语法/AST 校验，失败返回 bad_script。
+新增或覆盖远程脚本前，说明改动、已知调用方和兼容性，等用户确认这份源码。
 name 规则：^[a-z0-9][a-z0-9-]{0,63}$。`,
     inputSchema: {
       name: z.string().regex(/^[a-z0-9][a-z0-9-]{0,63}$/, 'name 须匹配 ^[a-z0-9][a-z0-9-]{0,63}$'),
@@ -347,7 +348,7 @@ name 规则：^[a-z0-9][a-z0-9-]{0,63}$。`,
 
   server.registerTool('script_delete', {
     title: 'Delete script',
-    description: '删除一个脚本。',
+    description: '删除远程脚本前，说明影响的调用方并等用户确认。',
     inputSchema: { name: z.string().min(1) },
     annotations: DESTRUCTIVE,
   }, async ({ name }) => guard(async () => {

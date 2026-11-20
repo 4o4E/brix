@@ -39,7 +39,18 @@ BRIX_TOKEN=<your-secret> npm run serve
 
 ## CLI
 
-每个脚本都既可走 HTTP，也可单独 CLI 调试：
+Agent 使用统一的 `brix` CLI 和 [Brix Skill](skills/brix-browser/SKILL.md)；RunForge 内直接运行 `brix`。命令复用 HTTP，现有 MCP 仍可用。
+
+```bash
+npm run --silent brix -- --help
+npm run --silent brix -- session open https://example.com
+npm run --silent brix -- page snapshot --session SESSION_ID
+npm run --silent brix -- session close SESSION_ID
+```
+
+`local run` 在调用方执行脚本，不上传源码；`remote run` 只调用已部署脚本。`experience` 在同一 Brix 实例内共享经过验证和脱敏的站点经验，按最终域名、路径、任务和条件查找。条目、历史和反馈保存在 `BRIX_DATA_DIR/experiences.json`；[命令和 HTTP 字段](skills/brix-browser/references/experience.md)。
+
+已有业务命令仍可单独使用：
 
 ```bash
 npm run login                          # 通过 brix HTTP API 触发登录脚本（自动化）

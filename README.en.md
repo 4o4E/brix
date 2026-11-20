@@ -39,7 +39,18 @@ BRIX_TOKEN=<your-secret> npm run serve
 
 ## CLI
 
-Every script can be invoked over HTTP or debugged standalone via the CLI:
+Agents use the unified `brix` CLI and [Brix Skill](skills/brix-browser/SKILL.md); RunForge exposes `brix` directly. The CLI uses HTTP, and MCP remains available.
+
+```bash
+npm run --silent brix -- --help
+npm run --silent brix -- session open https://example.com
+npm run --silent brix -- page snapshot --session SESSION_ID
+npm run --silent brix -- session close SESSION_ID
+```
+
+`local run` executes a module on the caller without uploading its source; `remote run` only invokes deployed scripts. `experience` shares verified, redacted site notes within one Brix instance, matched by final hostname, path, task, and conditions. Notes and feedback persist in `BRIX_DATA_DIR/experiences.json`; see the [CLI and HTTP reference](skills/brix-browser/references/experience.md).
+
+Existing task-specific commands remain available:
 
 ```bash
 npm run login                          # trigger the login script via brix HTTP API (automated)

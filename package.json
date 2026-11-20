@@ -30,6 +30,7 @@
     "node": ">=22"
   },
   "scripts": {
+    "brix": "node skills/brix-browser/scripts/cli.mjs",
     "lens": "tsx scripts/google-lens.ts",
     "login": "tsx scripts/login.ts",
     "zhihu": "tsx scripts/zhihu.ts",
